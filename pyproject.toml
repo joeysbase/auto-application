@@ -1,0 +1,36 @@
+[project]
+name = "auto-app"
+version = "0.1.0"
+description = "Collect, filter, and apply to job postings"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.13",
+    "httpx>=0.27",
+    "playwright>=1.47",
+    "pydantic>=2.8",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+    "typer>=0.12",
+    "zstandard>=0.22",
+]
+
+[project.scripts]
+auto-app = "auto_app.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auto_app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

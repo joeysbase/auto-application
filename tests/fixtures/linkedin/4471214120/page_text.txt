@@ -1,0 +1,80 @@
+0 notifications
+Home
+Jobs
+Me
+
+Enhance IT
+
+Entry-Level AI/ML Engineer
+
+California, United States · 3 hours ago · Over 100 applicants
+
+Promoted by hirer · No response insights available yet
+
+$30/hr - $35/hr
+On-site
+Full-time
+Application status
+
+Application submitted
+
+Save
+
+About the job
+
+Job Title: Entry-Level AI/ML Engineer
+
+Employment Type: Full-Time
+
+Relocation: Candidate must be open to relocate
+
+
+
+
+Job Summary
+
+We are seeking a motivated Entry-Level AI/ML Engineer to join our technology team. In this role, you will assist in developing and evaluating machine learning models, preparing datasets, implementing AI solutions, and supporting the integration of intelligent systems into applications. You will work closely with senior AI/ML engineers and data professionals to solve business problems using modern artificial intelligence and machine learning techniques.
+
+
+
+
+Key Responsibilities
+
+Assist in collecting, cleaning, and preprocessing data for AI/ML projects.
+Develop, train, test, and evaluate basic machine learning models.
+Apply supervised and unsupervised learning techniques to real-world problems.
+Assist with feature engineering and model optimization.
+Analyze model performance using appropriate evaluation metrics.
+Support the development of AI-powered applications and solutions.
+Work with Python and popular machine learning libraries and frameworks.
+Assist with Natural Language Processing (NLP), computer vision, or generative AI projects.
+Explore and work with Large Language Models (LLMs) and AI APIs.
+Create technical documentation and maintain project records.
+Collaborate with data scientists, software engineers, and other technical teams.
+Stay current with emerging AI and machine learning technologies and best practices.
+
+
+
+
+Required Qualifications
+
+Bachelor's degree in Computer Science, Artificial Intelligence, Data Science, Mathematics, Statistics, Engineering, or a related technical field.
+Basic understanding of machine learning and artificial intelligence concepts.
+Programming experience with Python.
+Familiarity with libraries such as NumPy, Pandas, Scikit-learn, TensorFlow, or PyTorch.
+Basic understanding of statistics, probability, and data analysis.
+Familiarity with SQL and databases.
+Understanding of model training, testing, and evaluation.
+Basic knowledge of Git and version control.
+Strong analytical and problem-solving skills.
+Good written and verbal communication skills.
+Ability to learn new technologies and work effectively in a team environment.
+
+
+
+
+Thanks
+
+… more
+
+Set alert for similar jobs

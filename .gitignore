@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+*.db-*
+out/
+.DS_Store
+
+# personal config, browser logins, and collected data
+config/searches.yaml
+browser-profiles/
+data/

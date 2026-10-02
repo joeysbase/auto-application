@@ -1,0 +1,114 @@
+# Copy to config/searches.yaml (git-ignored) and edit. Layout: docs/step1-collect.md §2.4.
+# `auto-app plan` shows what will run and where each field is applied; `auto-app plugins <name>` lists options.
+
+defaults:                                   # shared by every search
+  posted_within_days: 1                     # days back; "all" = no date limit
+  max_pages_per_search: 5
+  early_stop_known_streak: 15
+  card_filters:
+    exclude_companies: []
+    exclude_title_words: [senior, staff, principal, manager, director]
+
+# One entry per source. Each source is one plugin: built-in job sites (linkedin, handshake, jobright)
+# and the files in plugins/ — company sources live in plugins/companies/ (`auto-app add-company <URL>`
+# writes one). A source with no searches doesn't run.
+sources:
+  linkedin:                                 # LinkedIn's search page (the search bar on linkedin.com/jobs)
+    searches:
+      - name: ml-engineer-us                # unique within the source
+        keywords: ["machine learning engineer", "applied scientist"]   # one LinkedIn search per keyword
+        locations: ["United States"]        # → geoId (other places: site_filters.geo_id)
+        workplace_types: [remote, hybrid, onsite]   # all three = no workplace filter
+        employment_types: [full_time]       # → LinkedIn's Employment type filter
+        experience_levels: [entry]          # → Experience level: Entry-level
+      - name: ml-easy-apply                 # LinkedIn's own filter buttons, set directly
+        from: linkedin/ml-engineer-us       # same keywords / location / date, then:
+        site_filters:
+          easy_apply: true
+          under_10_applicants: true
+
+      # ---- LINKEDIN SEARCH TEMPLATE: every option. Copy, uncomment, rename; only `name` (or `from`) is required. ----
+      # - name: my-linkedin-search             # unique within linkedin; select it with `--search my-linkedin-search`
+      #   from: linkedin/ml-engineer-us        # optional: copy another search's generic fields, then override below
+      #   # -- generic fields (shared by all sources; copied by `from`) → mapped onto LinkedIn's own filters
+      #   keywords: ["applied scientist", "machine learning engineer"]   # one LinkedIn search per keyword; [] = none
+      #   locations: ["United States"]         # → geoId. Other places need site_filters.geo_id (one search per place)
+      #   posted_within_days: 7                # → Date posted, rounded up to 1 / 7 / 30 days; `all` = no date filter
+      #   workplace_types: [remote]            # only [remote] is a LinkedIn filter; other combinations → Step 2
+      #   employment_types: [full_time]        # full_time | part_time | contract | internship (temporary → Step 2)
+      #   experience_levels: [entry]           # entry | director | executive (internship, associate, mid_senior → Step 2)
+      #   # -- LinkedIn's own filter buttons; each one set here replaces the generic field above
+      #   site_filters:
+      #     employment_type: [full_time, contract]   # full_time | part_time | contract | internship | volunteer
+      #     experience_level: [entry_level]          # entry_level | senior | manager | director | executive
+      #     remote: true                             # the "Remote" button
+      #     easy_apply: true                         # "Easy Apply"
+      #     under_10_applicants: true                # "Under 10 applicants"
+      #     in_my_network: true                      # "In my network"
+      #     geo_id: "103644278"                      # location id: pick a place on linkedin.com/jobs, copy geoId= from the URL
+      #   # -- how much the tool reads, and what it skips before opening a job page
+      #   max_pages: 5                         # result pages per keyword (25 jobs each); default: defaults.max_pages_per_search
+      #   early_stop_known_streak: 15          # no effect on LinkedIn (results are by relevance, not date)
+      #   card_filters:                        # replaces defaults.card_filters for this search
+      #     exclude_title_words: [senior, staff, principal, manager, director]
+      #     exclude_companies: ["SomeAgency"]
+      #   # -- or: a search copied from your browser (its own filters apply; the fields above except max_pages/card_filters are ignored)
+      #   site_url: "https://www.linkedin.com/jobs/search-results/?keywords=…&geoId=…&f_SAL=…"
+    limits:
+      min_delay_s: 4
+      max_delay_s: 11
+      long_pause_every: 10
+      long_pause_s: [30, 90]
+      max_details_per_hour: 40      # job pages; when reached, pause until the hour window frees up
+      max_details_per_day: 300      # safety ceiling; past it, remaining jobs wait for a later run
+      cooldown_hours_on_block: 48
+
+  # handshake:
+  #   searches:
+  #     - from: linkedin/ml-engineer-us    # copy another source's search (its generic fields)
+  #   limits:
+  #     base_url: "https://northeastern.joinhandshake.com"
+
+  uipath:                                   # plugins/companies/uipath.py (Ashby board `uipath`)
+    searches:
+      - from: linkedin/ml-engineer-us       # name defaults to the copied search's name
+
+  nvidia:                                   # plugins/companies/nvidia.py (Workday)
+    searches:
+      - name: new-grad
+        locations: ["United States"]
+        employment_types: [full_time]
+        posted_within_days: all
+        site_filters:                       # this board's own options: `auto-app plugins nvidia`
+          facets: {"Job Type": ["New College Graduate"], "Job Category": ["Engineering", "Research"]}
+      - name: ml-experienced
+        from: linkedin/ml-engineer-us       # copy, then override
+        experience_levels: []               # (Workday has no experience filter — leave it to Step 2)
+        site_filters:
+          facets: {"Job Type": ["Regular Employee"]}
+
+  # anthropic:                              # needs plugins/companies/anthropic.py: `auto-app add-company https://www.anthropic.com/careers`
+  #   searches:
+  #     - { name: research, keywords: ["research engineer"], site_filters: {departments: [Research]} }
+
+run_window: { start: "08:00", end: "23:00" }
+min_hours_between_runs: 6
+retry:
+  max_fetch_attempts: 3
+  retry_within_days: 7
+  max_share_of_hourly: 0.5        # retry pass uses at most half a site's hourly limit per run
+
+jobs:                           # job TTL, applied by `auto-app purge`: days since any posting of the job was last seen
+  ttl_days:
+    unfiltered: 14              # not evaluated by Step 2 yet → deleted, with its postings
+    un_recommended: 7           # Step 2 left it out → deleted
+    recommended: 30             # undecided, applied or not applied → archived (a compact record, out of dedup)
+
+retention:                      # what `auto-app purge` drops from live postings (never their identity or keys)
+  raw_days: 7                   # raw pages/records/screenshots, after a successful parse
+  sightings_days: 30
+  logs_days: 30
+
+# true = write postings/batches as files under data/raw/ INSTEAD of the database (like --debug-files);
+# jobs need the database, so dedup only previews. Load the files later with `auto-app import-files`.
+debug_files: false

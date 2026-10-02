@@ -1,0 +1,7 @@
+I want to build a pipeline that collect, filter, and submit job application. 
+There are 3 steps:
+- 1. collect job postings from linkedin, jobright, and handshake based on some search settings (e.g., job title, posted dates, etc.). This step is like manaually searching for jobs on the website.
+- 2. read job description to select suitable jobs based on user CV and set preference. This step is similar to manually reading job description and decide which one to apply.
+- 3. for each selected jobs from step 2, tailor user cv based on job description and submit applications.
+What's your idea on this project?
+
