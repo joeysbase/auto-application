@@ -112,7 +112,7 @@ def _missing_plugin(cfg: AppConfig, name: str, error: str) -> str:
     old = cfg.legacy_companies.get(name)
     if old and old.get("board"):
         return (f"source {name!r}: no plugin — company sources are plugin files now. Create it with:\n"
-                f"    auto-app add-company {old['board']} --name {name}"
+                f"    auto-app source add {old['board']} --name {name}"
                 + (f" --company {old['display_name']!r}" if old.get("display_name") else ""))
     return f"source {name!r}: {error}"
 
@@ -163,7 +163,7 @@ def build_tasks(cfg: AppConfig, registry: Registry, sel: Selection | None = None
                 site_filters = plugin.SiteFilters(**s.site_filters)
             except ValidationError as e:
                 msgs = "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors())
-                errors.append(f"{where} site_filters: {msgs}  (options: `auto-app plugins {name}`)")
+                errors.append(f"{where} site_filters: {msgs}  (options: `auto-app source show {name}`)")
                 continue
             if s.site_url and info.kind != "browser":
                 errors.append(f"{where}: `site_url` is only for browser sources; {name} is searched through an API")
@@ -174,7 +174,7 @@ def build_tasks(cfg: AppConfig, registry: Registry, sel: Selection | None = None
             for f in rs.deferred:
                 if f in explicit:
                     errors.append(f"{where}: `{f}` is not supported by {name} (remove it, and state it in your Step 2 command "
-                                  f"if it matters — `auto-app plugins {name}` lists what it supports)")
+                                  f"if it matters — `auto-app source show {name}` lists what it supports)")
                 else:
                     task.warnings.append(f"{s.search_name}: {f} (copied from {s.from_}) not supported by {name} → not filtered (state it in your Step 2 command if it matters)")
             check = getattr(plugin, "check_search", None)

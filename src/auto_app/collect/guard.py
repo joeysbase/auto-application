@@ -18,7 +18,7 @@ class HardBlock(Exception):
 
 
 class NeedsLogin(HardBlock):
-    """Session expired or login wall; user must run `auto-app login`."""
+    """Session expired or login wall; user must run `auto-app source login`."""
 
 
 class ChallengeDetected(HardBlock):

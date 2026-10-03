@@ -1,4 +1,4 @@
-"""`auto-app purge` (docs/step1-collect.md §9): first the job TTL (§9.1–9.2, job_ttl.py) deletes or archives
+"""`auto-app data purge` (docs/step1-collect.md §9): first the job TTL (§9.1–9.2, job_ttl.py) deletes or archives
 expired jobs; then posting-data retention (§9.3) drops heavy data from live postings — raw data after parse,
 old sightings and logs — never their identity or dedup keys."""
 

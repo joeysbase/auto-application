@@ -1,4 +1,4 @@
-"""Detect which job platform a company's careers page uses (for `auto-app add-company`)."""
+"""Detect which job platform a company's careers page uses (for `auto-app source add`)."""
 
 import re
 

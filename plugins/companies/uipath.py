@@ -1,4 +1,4 @@
-"""UiPath careers (ashby). Written by `auto-app add-company`; edit freely —
+"""UiPath careers (ashby). Written by `auto-app source add`; edit freely —
 override methods here for anything specific to this company's board."""
 
 from auto_app.platforms.ashby import AshbySource

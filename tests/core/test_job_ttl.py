@@ -168,17 +168,17 @@ def test_mark_command_sets_state_and_refuses_archived(db, tmp_path, monkeypatch)
     add(db, "nvidia", "JR7", url=wd("JR7"), title="Sales Lead", desc=OTHER)
     run(db)
     a, b = job_of(db, "nvidia/JR6"), job_of(db, "nvidia/JR7")
-    r = CliRunner().invoke(app, ["mark", str(a), str(b), "--as", "applied"])
+    r = CliRunner().invoke(app, ["job", "mark", str(a), str(b), "--as", "applied"])
     assert r.exit_code == 0, r.output
     assert db.job(a)["state"] == "applied" and db.job(a)["step2"] == "recommended" and db.job(a)["expires_at"]
-    assert CliRunner().invoke(app, ["mark", str(b), "--as", "not_evaluated"]).exit_code == 0
+    assert CliRunner().invoke(app, ["job", "mark", str(b), "--as", "not_evaluated"]).exit_code == 0
     assert db.job(b)["state"] == "not_evaluated"
-    assert CliRunner().invoke(app, ["mark", str(a), "--as", "bogus"]).exit_code != 0
+    assert CliRunner().invoke(app, ["job", "mark", str(a), "--as", "bogus"]).exit_code != 0
     seen_days_ago(db, "nvidia/JR6", 31)
     purge(db, AppConfig().retention, ttl=TTL)
-    r = CliRunner().invoke(app, ["mark", str(a), "--as", "recommended"])
+    r = CliRunner().invoke(app, ["job", "mark", str(a), "--as", "recommended"])
     assert r.exit_code == 1 and "archived" in r.output
-    listing = CliRunner().invoke(app, ["jobs", "--archived"])
+    listing = CliRunner().invoke(app, ["job", "list", "--archived"])
     assert listing.exit_code == 0 and "archived" in listing.output and "ML Engineer" in listing.output
 
 

@@ -120,7 +120,7 @@ def test_cli_refuses_rebuild_once_a_job_moved_on(tmp_path, monkeypatch):
     add(db, "linkedin", "61", apply_url=wd("JR6"))
     run(db)
     db.set_job_state(db.jobs()[0]["job_id"], step2="recommended")
-    result = CliRunner().invoke(app, ["dedup", "--rebuild"])
+    result = CliRunner().invoke(app, ["process", "dedup", "--rebuild"])
     assert result.exit_code == 2 and "refusing to rebuild" in result.output
     assert len(db.jobs()) == 1
 

@@ -258,5 +258,5 @@ def format_normalize(stats: dict[str, NormalizeStats]) -> str:
     out.append("company via: config = company source · board = its employer link points at a configured company ·")
     out.append("             alias/learned = name matched · name = normalized name only")
     out.append("")
-    out.append("normalize prepares each posting's keys on its own; to see duplicates, run `auto-app dedup --preview`")
+    out.append("normalize prepares each posting's keys on its own; to see duplicates, run `auto-app process dedup --preview`")
     return "\n".join(out)

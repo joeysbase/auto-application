@@ -56,9 +56,9 @@ pool ──(step 2)──► un_recommended
 
 Step 3's progress between "I'll apply" and "submitted" (tailoring, review, submission attempts) lives on its application record, not on the job.
 
-Implemented in C11 (Step 1): the two fields, the TTL and archiving below. Until Steps 2–3 set them, `auto-app mark JOB… --as recommended | un_recommended | applied | not_applied | not_evaluated` does it by hand.
+Implemented in C11 (Step 1): the two fields, the TTL and archiving below. Until Steps 2–3 set them, `auto-app job mark JOB… --as recommended | un_recommended | applied | not_applied | not_evaluated` does it by hand.
 
-**Job TTL** (global, `jobs.ttl_days`; clock = time since any of the job's postings was last seen; details in [step1 §9](step1-collect.md#9-retention-ttl)):
+**Job TTL** (global, `AUTO_APP_JOBS__TTL_DAYS__*` in `.env`; clock = time since any of the job's postings was last seen; details in [step1 §9](step1-collect.md#9-retention-ttl)):
 
 | State | Default TTL | After the TTL |
 |---|---|---|

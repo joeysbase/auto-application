@@ -138,17 +138,17 @@ def test_filters_command_lists_checks_and_previews(tmp_path, monkeypatch):
     folder = tmp_path / "myfilters"
     shutil.copytree(EXAMPLES_DIR, folder)
     make(folder, name="broken", yaml="tools: [bash]\n")
-    r = CliRunner().invoke(app, ["filters", "--dir", str(folder)])
+    r = CliRunner().invoke(app, ["filter", "list", "--dir", str(folder)])
     assert r.exit_code == 0 and "ml-engineer" in r.output and "reads: parser.py" in r.output
     assert "broken" in r.output and "not loaded" in r.output
-    r = CliRunner().invoke(app, ["filters", "ml-engineer", "--dir", str(folder)])
+    r = CliRunner().invoke(app, ["filter", "show", "ml-engineer", "--dir", str(folder)])
     assert r.exit_code == 0 and "sponsorship-notes.md" in r.output and "v" + load_filter(folder / "ml-engineer").version in r.output
 
     db = DbStore(tmp_path / "data" / "auto_app.db", Paths(home=tmp_path))
     add(db, "nvidia", "JR1", url=wd("JR1"), title="ML Engineer")
     run(db)
-    r = CliRunner().invoke(app, ["filters", "ml-engineer", "--dir", str(folder), "--job", str(job_of(db, "nvidia/JR1"))])
+    r = CliRunner().invoke(app, ["filter", "show", "ml-engineer", "--dir", str(folder), "--job", str(job_of(db, "nvidia/JR1"))])
     assert r.exit_code == 0, r.output
     assert "## The job\n<job_posting>" in r.output and "Title: ML Engineer" in r.output and "Company: NVIDIA" in r.output
     assert "Locations: Santa Clara, CA" in r.output and r.output.rstrip().endswith("deal-breaker you found\"}")
-    assert CliRunner().invoke(app, ["filters", "ml-engineer", "--dir", str(folder), "--job", "999"]).exit_code == 1
+    assert CliRunner().invoke(app, ["filter", "show", "ml-engineer", "--dir", str(folder), "--job", "999"]).exit_code == 1

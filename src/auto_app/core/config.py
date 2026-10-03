@@ -6,11 +6,15 @@ Layout (see docs/step1-collect.md §2.4):
 Which board a company source reads, and its display name, live in its plugin (plugins/companies/).
 """
 
+import logging
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = logging.getLogger(__name__)
 
 WorkplaceType = Literal["onsite", "remote", "hybrid"]
 EmploymentType = Literal["full_time", "part_time", "contract", "temporary", "internship"]
@@ -140,7 +144,7 @@ class RetryConfig(BaseModel):
 
 
 class RetentionConfig(BaseModel):
-    """Posting-data retention: what `auto-app purge` drops from live postings (docs/step1-collect.md §9.3).
+    """Posting-data retention: what `auto-app data purge` drops from live postings (docs/step1-collect.md §9.3).
     Whole jobs expire by `jobs.ttl_days` instead."""
 
     model_config = ConfigDict(extra="forbid")
@@ -169,6 +173,36 @@ class JobTTL(BaseModel):
         return {"recommended": self.recommended, "un_recommended": self.un_recommended}.get(step2 or "", self.unfiltered)
 
 
+class ModelPrice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    input_per_mtok: float  # USD per million input tokens
+    output_per_mtok: float  # USD per million output tokens
+
+
+class SelectConfig(BaseModel):
+    """Step 2 runs (docs/step2-select.md). Prices are for cost tracking and `select --max-cost`; check
+    https://www.anthropic.com/pricing and add the models your filters use."""
+
+    model_config = ConfigDict(extra="forbid")
+    # auto = the Claude API when ANTHROPIC_API_KEY is set, otherwise your Claude Code login (`claude` CLI)
+    runner: Literal["auto", "api", "claude-cli"] = "auto"
+    claude_cli: str = "claude"  # the Claude Code executable
+    deepseek_base_url: str = "https://api.deepseek.com"  # filters with a `deepseek-…` model use DEEPSEEK_API_KEY
+    parallel: Annotated[int, Field(ge=1, le=16)] = 3  # agent runs at once
+    prices: dict[str, ModelPrice] = Field(default_factory=lambda: {
+        "claude-haiku-4-5-20251001": ModelPrice(input_per_mtok=1.0, output_per_mtok=5.0),
+    })
+    web_search_usd_per_1000: float = 10.0
+
+    def cost(self, model: str, input_tokens: int, output_tokens: int, web_searches: int) -> float | None:
+        """USD, or None when the model has no price configured."""
+        price = self.prices.get(model)
+        if price is None:
+            return None
+        return (input_tokens * price.input_per_mtok + output_tokens * price.output_per_mtok) / 1e6 \
+            + web_searches * self.web_search_usd_per_1000 / 1000
+
+
 class JobsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ttl_days: JobTTL = JobTTL()
@@ -182,6 +216,7 @@ class AppConfig(BaseModel):
     retry: RetryConfig = RetryConfig()
     retention: RetentionConfig = RetentionConfig()
     jobs: JobsConfig = JobsConfig()
+    select: SelectConfig = SelectConfig()
     # Also write every posting/batch as files under data/raw/ (a browsable debug copy of the database).
     debug_files: bool = False
     # Old `companies:` entries (platform, board) — only to tell you which plugin file to create.
@@ -261,6 +296,51 @@ def _migrate(data: dict) -> dict:
     return data
 
 
-def load_config(path: Path) -> AppConfig:
-    data = yaml.safe_load(path.read_text()) or {}
-    return AppConfig.model_validate(data)
+# ---- global settings: .env / environment (docs: README "Configuration") ----------------------------
+
+GLOBAL_FIELDS = ("run_window", "min_hours_between_runs", "retry", "retention", "jobs", "select", "debug_files")
+ENV_PREFIX = "AUTO_APP_"
+
+
+class GlobalSettings(BaseSettings):
+    """Global settings from the environment (the project's `.env` is loaded into it at startup):
+    AUTO_APP_<FIELD>, nested with `__` (AUTO_APP_JOBS__TTL_DAYS__UNFILTERED=14); maps and lists as JSON."""
+
+    model_config = SettingsConfigDict(env_prefix=ENV_PREFIX, env_nested_delimiter="__", extra="ignore")
+    run_window: RunWindow | None = None
+    min_hours_between_runs: float | None = None
+    retry: RetryConfig | None = None
+    retention: RetentionConfig | None = None
+    jobs: JobsConfig | None = None
+    select: SelectConfig | None = None
+    debug_files: bool | None = None
+
+
+def load_env_file(path: Path) -> bool:
+    """Load a `.env` file into the environment; variables already set in the shell win. True if it exists."""
+    from dotenv import load_dotenv
+
+    return load_dotenv(path, override=False) if path.is_file() else False
+
+
+def env_settings() -> dict:
+    """Only the global settings actually set in the environment, as nested dicts."""
+    return GlobalSettings().model_dump(exclude_unset=True, exclude_none=True)
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def load_config(path: Path | None) -> AppConfig:
+    """searches.yaml (what to search) + global settings from the environment / `.env`, which win.
+    Global settings still written in searches.yaml are used, with a notice to move them to `.env`."""
+    data = (yaml.safe_load(path.read_text()) or {}) if path and path.is_file() else {}
+    in_yaml = [k for k in GLOBAL_FIELDS if k in data]
+    if in_yaml:
+        log.warning("global settings in %s: %s — move them to .env (see .env.example); .env values win",
+                    path.name, ", ".join(in_yaml))
+    return AppConfig.model_validate(_deep_merge(data, env_settings()))

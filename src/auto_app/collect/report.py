@@ -99,7 +99,7 @@ def format_parsed(store, ref: PostingRef) -> list[str]:
         return ["", f"--- parse failed ({posting.get('parser')}) ---", posting.get("parse_error", "")]
     p = store.get_parsed(ref)
     if not p:
-        return ["", "--- not parsed yet (run `auto-app parse`) ---"]
+        return ["", "--- not parsed yet (run `auto-app process parse`) ---"]
     sal = p.get("salary") or {}
     salary = (f"{sal.get('min'):,.0f}–{sal.get('max'):,.0f} {sal.get('currency') or ''}/{sal.get('period') or '?'}"
               f" ({sal.get('source')}{'' if sal.get('plausible', True) else ', implausible'})") if sal.get("min") else "-"
@@ -152,7 +152,7 @@ def format_one(store, ref: PostingRef, text_chars: int = 1200) -> str:
     posting = store.get_posting(ref) or {}
     if posting.get("job_id"):
         how = f"duplicate of {posting['duplicate_of']}, " if posting.get("duplicate_of") else ""
-        where += f"\njob          #{posting['job_id']} ({how}{posting.get('match_rule')}) — `auto-app jobs {posting['job_id']}`"
+        where += f"\njob          #{posting['job_id']} ({how}{posting.get('match_rule')}) — `auto-app job show {posting['job_id']}`"
     blocks = format_parsed(store, ref) + format_normalized(store, ref) + [""]
     if r["kind"] == "api":
         return "\n".join([

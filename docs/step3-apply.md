@@ -107,7 +107,7 @@ links: { github: …, linkedin: …, portfolio: … }
 
 ## 5. Review queue
 
-`auto-app review-applications` — for each tailored application: job summary, CV diff and PDF, cover letter, every form answer (source: bank / drafted / missing), verification results, Step 1 warnings. Actions: **approve**, **edit** (opens the file; re-verified on save), **drop** (the job's `decision` becomes `not_applied`). Progress is the application's status (`tailored → approved`); the job stays recommended-undecided until submission.
+`auto-app apply review` — for each tailored application: job summary, CV diff and PDF, cover letter, every form answer (source: bank / drafted / missing), verification results, Step 1 warnings. Actions: **approve**, **edit** (opens the file; re-verified on save), **drop** (the job's `decision` becomes `not_applied`). Progress is the application's status (`tailored → approved`); the job stays recommended-undecided until submission.
 
 ---
 
@@ -122,7 +122,7 @@ links: { github: …, linkedin: …, portfolio: … }
 
 **Submitter flow (visible browser):** open apply URL → fill fields from the approved package → upload `cv.pdf` → screenshot each step → **stop before the final Submit** and wait for you to click it (default). After submit: capture the confirmation page/screenshot, set `applied`.
 
-**Manual fallback:** `auto-app apply-manual <job_id>` opens the apply URL and the CV folder; you apply; `auto-app mark-applied <job_id>` records it.
+**Manual fallback:** `auto-app apply manual <job_id>` opens the apply URL and the CV folder; you apply; `auto-app apply mark-applied <job_id>` records it.
 
 **Safety limits:** max applications per day (e.g. 20) and per company per month; CAPTCHA or login wall → hand to you (same mechanism as Step 1's manual checks); never auto-submit on unknown questions.
 
@@ -143,11 +143,11 @@ On submission (`submitted`, or `mark-applied`) the job's `decision` becomes `app
 ## 8. CLI
 
 ```
-auto-app tailor [--job ID | --limit N]
-auto-app review-applications
-auto-app submit [--job ID] [--platform P]        # fills forms, waits for your final click
-auto-app apply-manual <job_id> ; auto-app mark-applied <job_id>
-auto-app applications [--status S]               # history
+auto-app apply tailor [--job ID | --limit N]
+auto-app apply review
+auto-app apply submit [--job ID] [--platform P]  # fills forms, waits for your final click
+auto-app apply manual <job_id> ; auto-app apply mark-applied <job_id>
+auto-app apply list [--status S]                 # history
 ```
 
 ---
@@ -159,7 +159,7 @@ auto-app applications [--status S]               # history
 | A1 | `master_cv.yaml` schema + loader + default CV render |
 | A2 | Tailor + verification + render for one job, end to end |
 | A3 | `answers.yaml` + question matching; review queue |
-| A4 | Manual fallback (`apply-manual`, `mark-applied`) — usable from day one |
+| A4 | Manual fallback (`apply manual`, `apply mark-applied`) — usable from day one |
 | A5 | Greenhouse / Lever / Ashby submitters (stop before Submit) |
 | A6 | LinkedIn Easy Apply submitter |
 | A7 | Optional per-platform auto-submit after N successful supervised submissions |

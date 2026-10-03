@@ -1,4 +1,4 @@
-"""`auto-app jobs`: the job list and one job's details, sized to the terminal."""
+"""`auto-app job list` / `job show`: the job list and one job's details, sized to the terminal."""
 
 import shutil
 from datetime import datetime, timezone
@@ -121,7 +121,7 @@ def format_job_list(rows: list[dict], width: int | None = None) -> str:
         if show_status:
             line += f"  {STATE_LABEL.get(j['state'], j['state']):<{status_w}}"
         out.append(line.rstrip())
-    notes = ["details of one job: auto-app jobs <#>"]
+    notes = ["details of one job: auto-app job show <#>"]
     if any(j.get("warnings") for j in rows):
         notes.insert(0, "⚠ = looks like an archived job you already acted on (see its details)")
     if any(expiry(j).endswith("!") for j in rows):

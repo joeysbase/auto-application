@@ -91,24 +91,5 @@ sources:
   #   searches:
   #     - { name: research, keywords: ["research engineer"], site_filters: {departments: [Research]} }
 
-run_window: { start: "08:00", end: "23:00" }
-min_hours_between_runs: 6
-retry:
-  max_fetch_attempts: 3
-  retry_within_days: 7
-  max_share_of_hourly: 0.5        # retry pass uses at most half a site's hourly limit per run
-
-jobs:                           # job TTL, applied by `auto-app purge`: days since any posting of the job was last seen
-  ttl_days:
-    unfiltered: 14              # not evaluated by Step 2 yet → deleted, with its postings
-    un_recommended: 7           # Step 2 left it out → deleted
-    recommended: 30             # undecided, applied or not applied → archived (a compact record, out of dedup)
-
-retention:                      # what `auto-app purge` drops from live postings (never their identity or keys)
-  raw_days: 7                   # raw pages/records/screenshots, after a successful parse
-  sightings_days: 30
-  logs_days: 30
-
-# true = write postings/batches as files under data/raw/ INSTEAD of the database (like --debug-files);
-# jobs need the database, so dedup only previews. Load the files later with `auto-app import-files`.
-debug_files: false
+# Global settings (job TTL, retention, Step 2 prices, run window, retry, debug_files) and the API key
+# live in .env at the project root — template: .env.example.

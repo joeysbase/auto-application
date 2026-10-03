@@ -1,4 +1,4 @@
-"""Adobe careers (workday). Written by `auto-app add-company`; edit freely —
+"""Adobe careers (workday). Written by `auto-app source add`; edit freely —
 override methods here for anything specific to this company's board."""
 
 from auto_app.platforms.workday import WorkdaySource

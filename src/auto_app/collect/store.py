@@ -31,7 +31,7 @@ from auto_app.core.models import Card, Outcome, RawCapture, RawPosting, utcnow
 
 
 class RawPurged(KeyError):
-    """The posting's raw data was removed by `auto-app purge` (its parsed/normalized data remain)."""
+    """The posting's raw data was removed by `auto-app data purge` (its parsed/normalized data remain)."""
 
 
 class PostingRef(NamedTuple):

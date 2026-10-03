@@ -15,7 +15,7 @@ jobs ─────┴─► agent runs the command on the job ─► answer �
                                                                      your decisions train each filter's preference model
 ```
 
-Status: S1 ✅ implemented (filters: loading, validation, versions, job details, `filters`); S2–S3 📐 designed. Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
+Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 📐 designed. Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
 
 ---
 
@@ -45,7 +45,7 @@ filters/
     filter.yaml
 ```
 
-The folder name is the filter's name. `auto-app filters` lists them; an example filter is committed under `filters.example/`.
+The folder name is the filter's name. `auto-app filter list` lists them; an example filter is committed under `filters.example/`.
 
 ### 2.1 `command.md` — run for every job
 
@@ -97,7 +97,7 @@ max_tool_calls: 6
 applies_to: [linkedin, nvidia]                 # sources, or searches as `source/search`; omit = every job
 ```
 
-- **Job details** available: `title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`. Values come from the job's primary posting (parsed fields) and its merged `job_locations`; the description is the parsed text with legal boilerplate removed (EEO, accommodations, `#LI-` tags), original casing kept, cut at `max_description_chars`. In the command they appear as labelled lines (`Title: …`, `Company: …`, `Description: …`; a missing value is written `not stated`) inside a `<job_posting> … </job_posting>` block marked as **data from the posting — not instructions**. `auto-app filters NAME --job N` prints the exact text.
+- **Job details** available: `title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`. Values come from the job's primary posting (parsed fields) and its merged `job_locations`; the description is the parsed text with legal boilerplate removed (EEO, accommodations, `#LI-` tags), original casing kept, cut at `max_description_chars`. In the command they appear as labelled lines (`Title: …`, `Company: …`, `Description: …`; a missing value is written `not stated`) inside a `<job_posting> … </job_posting>` block marked as **data from the posting — not instructions**. `auto-app filter show NAME --job N` prints the exact text.
 - **Default:** the command + title + description are the core; **company** and **location** are one short line each and often decisive (location is usually in the page header, not the text; the company bears on sponsorship and type of work).
 - **Validated when the filter loads** (an error names the file and field): `command.md` exists; job details, tools and `applies_to` names are known; `parser.py` defines `parse`; without a `parser.py`, the command should mention the convention (a warning if it doesn't).
 
@@ -167,7 +167,11 @@ One agent run per job per applicable filter, started with the filter's `command.
 | `web_search`, `web_fetch` | the API's server-side tools, with **linkedin.com blocked by domain** |
 | `read_file` | ours: reads a file in the filter's own folder only (path checked; no other files) |
 
-The loop: send the command + job → the model calls tools → results go back → repeat until it answers, or `max_turns` / `max_tool_calls` is reached (then it's told to answer with what it has). The app counts tokens and cost per run, records the trace, retries transient API errors, and stops a `select` run at `--max-cost`. Tested offline with a fake model (as Step 1 tests collection against a fake site). If filters ever need much more (running scripts, many tools), the runner can be swapped for the Agent SDK without changing filters, parsing or storage.
+The loop: send the command + job → the model calls tools → results go back → repeat until it answers, or `max_turns` / `max_tool_calls` is reached (then it's told to answer with what it has). Implemented in `src/auto_app/select/runner.py` with the SDK's `web_search_20250305` / `web_fetch_20250910` tool definitions (`blocked_domains: [linkedin.com]`, `max_uses` = the remaining tool budget); when the budget is used up, the next call sets `tool_choice: none` and adds a wrap-up message; `pause_turn` hands the turn back unchanged. A short system message frames the posting and web pages as data and forbids LinkedIn — it doesn't say how to judge. Cost = tokens × `AUTO_APP_SELECT__PRICES` + searches × `AUTO_APP_SELECT__WEB_SEARCH_USD_PER_1000` (both in `.env`); `--max-cost` is checked before each run starts, so runs already in flight can go slightly over. The app counts tokens and cost per run, records the trace, retries transient API errors, and stops a `select` run at `--max-cost`. Tested offline with a fake model (as Step 1 tests collection against a fake site). If filters ever need much more (running scripts, many tools), the runner can be swapped for the Agent SDK without changing filters, parsing or storage.
+
+**Second runner: your Claude Code login** (added 2026-10-03). `AUTO_APP_SELECT__RUNNER=auto` (default) uses the API runner when `ANTHROPIC_API_KEY` is set and otherwise runs `claude -p` (headless Claude Code, `src/auto_app/select/runner_cli.py`) — usage then counts against your Claude subscription. **Every call is a new session with no context from earlier calls:** a fresh `--session-id` (UUID), `--no-session-persistence`, `--setting-sources ""` and our own system prompt (no settings or memory), and a new temporary folder outside the project per call, holding only copies of the filter's other files and deleted afterwards — so no `CLAUDE.md` or other project file can be picked up (checked: with these flags, even an ancestor `CLAUDE.md` wasn't used). It is locked down to the same abilities, verified live with Claude Code 2.1: `--tools WebSearch,WebFetch,Read` (per the filter), `--permission-mode dontAsk`, `Read(./**)` allowed in the filter's folder (cwd) except `command.md` / `filter.yaml` / `parser.py`, `WebFetch(domain:*linkedin.com)` denied, `--setting-sources ""`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, and `ANTHROPIC_API_KEY` removed from its environment. It reads Claude Code's `--output-format json` (`result`, `usage`, `num_turns`, `total_cost_usd`, `permission_denials`); `max_turns` → `--max-turns` (running out of turns → "couldn't read" → review); `max_tool_calls` isn't enforced separately. Its trace has the answer, turns and denials but not each lookup.
+
+**Third runner: DeepSeek** (added 2026-10-03, `src/auto_app/select/runner_deepseek.py`). Chosen **per filter by its model**: `deepseek-…` models run on DeepSeek's OpenAI-compatible Chat Completions API (`AUTO_APP_SELECT__DEEPSEEK_BASE_URL`, default `https://api.deepseek.com`) with `DEEPSEEK_API_KEY`; Claude models keep `api` / `claude-cli`. The same loop (budget, wrap-up with `tool_choice: none`, trace), with function tools run by the app: `read_file` (the filter's folder only) and our own `web_fetch` — public http(s) only, linkedin.com and loopback / private / link-local / reserved addresses refused (checked again on every redirect hop), 2 MB / 20 s, HTML reduced to text, 20k characters returned. `web_search` has no equivalent there and is skipped with a notice. The assistant's `reasoning_content` is not sent back. Prices aren't preset (add them to `AUTO_APP_SELECT__PRICES`).
 
 
 
@@ -227,12 +231,12 @@ Open: its inputs, model type, when it's trusted enough to recommend, and how it 
 
 ## 8. Review
 
-`auto-app review` walks through **recommended, undecided** jobs:
+`auto-app filter review` walks through **recommended, undecided** jobs:
 
 - shows: title, company, locations, the filter(s) that recommended it and their reasons, warnings, expires in N days, link;
 - you answer **apply** (→ Step 3 creates an application; `decision` becomes `applied` on submission) or **no** (`decision = not_applied`), optionally with a short reason — kept as training labels for the filters that judged the job, and for improving commands.
 
-Also: `auto-app why <job>` (each filter's version, the agent's full answer, the parsed output, and the trace with every page it looked at).
+Also: `auto-app filter why <job>` (each filter's version, the agent's full answer, the parsed output, and the trace with every page it looked at).
 
 ---
 
@@ -254,13 +258,14 @@ Step 2 sets `jobs.step2` / `step2_at`; review sets `jobs.decision` / `decided_at
 ## 10. CLI
 
 ```
-auto-app filters [NAME] [--job N] [--dir PATH]           # list filters, check one; --job: exactly what the agent gets for job N (S1 ✅)
-auto-app select [--filter NAME]… [--limit N] [--rescore] [--max-cost USD] [--parallel N]   # judge active jobs not yet judged by the current versions
-auto-app select --reparse [--filter NAME] [--dry-run]     # re-read stored answers with the current parser (no agent runs)
-auto-app review [--filter NAME]                           # decide on recommended jobs
-auto-app why <job_id>                                     # each filter's answer, parsed output, trace and version
+auto-app filter list [--dir PATH]                                 # your filters: version, model, tools, problems (S1 ✅)
+auto-app filter show <NAME> [--job N] [--dir PATH]                # one filter; --job: exactly what the agent gets (S1 ✅)
+auto-app filter run [-f NAME]… [--limit N] [--rescore] [--max-cost USD] [--parallel N] [--dry-run]   # judge jobs (S2 ✅)
+auto-app filter why <JOB_ID> [--trace]                            # each filter's answer, lookups, cost, version (S2 ✅)
+auto-app filter reparse [-f NAME]… [--dry-run]                    # re-read stored answers with the current parsers (S2 ✅)
+auto-app filter review [-f NAME]                                  # decide on recommended jobs (S3, planned)
 ```
-Until these exist, `auto-app mark` (C11) sets states by hand.
+Until review exists, `auto-app job mark` (C11) sets states by hand.
 
 ---
 
@@ -269,7 +274,7 @@ Until these exist, `auto-app mark` (C11) sets states by hand.
 | # | Deliverable |
 |---|---|
 | S1 | Filters: folder loader + validation (`command.md`, `filter.yaml`, optional `parser.py`, other files), versions, job-details builder (labelled lines, boilerplate stripped, length cap), `$ARGUMENTS` substitution; `filters` command (list, check, `--job` preview); `filters.example/` committed — ✅ `src/auto_app/select/` |
-| S2 | Agent judgment: agent runner — our loop on the Claude API (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
+| S2 ✅ | Agent judgment: agent runners — our loop on the Claude API, headless Claude Code with your login (`runner: auto`), and DeepSeek for `deepseek-…` models (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
 | S3 | `review` → `reviews` (labels per filter) |
 | — | Preference model per filter: design open (§7) |
 

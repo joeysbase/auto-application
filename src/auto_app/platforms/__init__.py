@@ -2,7 +2,7 @@
 
 A platform base knows how to search one platform's job boards (Workday, Ashby …) but is not a
 source itself. Each company is a small plugin under `plugins/companies/` that subclasses one and
-sets its `name`, `company` and `board` — `auto-app add-company` writes that file.
+sets its `name`, `company` and `board` — `auto-app source add` writes that file.
 """
 
 from auto_app.platforms.ashby import AshbySource

@@ -111,7 +111,7 @@ def test_job_sites_and_companies_layout_is_migrated():
     assert old.sources["nvidia"].searches[0].name == "main" and old.sources["nvidia"].searches[0].keywords == ["y"]
     assert old.sources["acme"].searches[0].from_ == "linkedin/ml"  # no search_from: copies every job-site search
     # a company without a plugin file: the error says how to create it
-    with pytest.raises(ConfigError, match="auto-app add-company acme --name acme --company 'Acme'"):
+    with pytest.raises(ConfigError, match="auto-app source add acme --name acme --company 'Acme'"):
         build_tasks(old, REG, Selection(sources=["acme"]))
 
 

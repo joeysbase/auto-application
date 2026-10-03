@@ -1,7 +1,7 @@
 """Step 1b dedup (docs/step1-collect.md §7): Level 1b (same source, different ID) and Level 2
 (across sources) over normalized postings, grouped with vetoes checked at every merge.
 
-This module computes the grouping; `auto-app dedup --preview` reports it without writing anything.
+This module computes the grouping; `auto-app process dedup --preview` reports it without writing anything.
 Writing jobs (`jobs`, `job_keys`, `job_locations`) comes with the database (C8c).
 """
 

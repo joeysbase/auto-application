@@ -438,6 +438,74 @@ class DbStore:
                                                .order_by(T.job_locations.c.location_norm))]
         return parsed, locs
 
+    # ---- Step 2 -----------------------------------------------------------------------------
+
+    def save_filter_version(self, flt) -> None:
+        fv = T.filter_versions
+        with self.engine.begin() as conn:
+            if conn.execute(select(fv.c.filter_version).where(fv.c.filter_version == flt.version)).first():
+                return
+            conn.execute(insert(fv).values(
+                filter_version=flt.version, filter=flt.name, command=(flt.path / "command.md").read_text(),
+                files={k: v.decode("utf-8", errors="replace") for k, v in flt.files.items()},
+                settings=flt.config.versioned(), created_at=utcnow()))
+
+    def save_judgment(self, job_id: int, flt, run, parsed, cost: float | None) -> None:
+        jt = T.judgments
+        status = "error" if run.status == "error" else ("ok" if parsed.ok else "unparsed")
+        row = dict(job_id=job_id, filter_version=flt.version, filter=flt.name, model=flt.config.model, status=status,
+                   answer=run.answer, recommend=parsed.output.recommend if status != "error" else None,
+                   reason=parsed.output.reason, parser=parsed.parser, parse_error=parsed.error, error=run.error,
+                   trace=zjson(run.trace), input_tokens=run.input_tokens, output_tokens=run.output_tokens,
+                   tool_calls=run.tool_calls, cost_usd=cost, created_at=utcnow(), parsed_at=utcnow())
+        with self.engine.begin() as conn:
+            conn.execute(jt.delete().where(jt.c.job_id == job_id, jt.c.filter_version == flt.version))
+            conn.execute(insert(jt).values(**row))
+
+    def update_parsed(self, job_id: int, filter_version: str, parsed) -> None:
+        jt = T.judgments
+        with self.engine.begin() as conn:
+            conn.execute(update(jt).where(jt.c.job_id == job_id, jt.c.filter_version == filter_version,
+                                          jt.c.status != "error").values(
+                status="ok" if parsed.ok else "unparsed", recommend=parsed.output.recommend,
+                reason=parsed.output.reason, parser=parsed.parser, parse_error=parsed.error, parsed_at=utcnow()))
+
+    def judgment_rows(self, job_id: int | None = None, filter: str | None = None, with_answer: bool = False) -> list[dict]:
+        jt = T.judgments
+        cols = [jt.c.job_id, jt.c.filter, jt.c.filter_version, jt.c.model, jt.c.status, jt.c.recommend, jt.c.reason,
+                jt.c.parser, jt.c.parse_error, jt.c.error, jt.c.input_tokens, jt.c.output_tokens, jt.c.tool_calls,
+                jt.c.cost_usd, jt.c.created_at]
+        if with_answer:
+            cols += [jt.c.answer, jt.c.trace]
+        q = select(*cols).order_by(jt.c.job_id, jt.c.filter, jt.c.created_at)
+        if job_id is not None:
+            q = q.where(jt.c.job_id == job_id)
+        if filter is not None:
+            q = q.where(jt.c.filter == filter)
+        with self.engine.connect() as conn:
+            rows = [dict(r) for r in conn.execute(q).mappings()]
+        for r in rows:
+            r["created_at"] = iso(r["created_at"])
+            if with_answer:
+                r["trace"] = unzjson(r["trace"], [])
+        return rows
+
+    def job_scopes(self) -> dict[int, set[str]]:
+        """For every active job: the sources and `source/search` names its postings were found by
+        (what a filter's `applies_to` matches)."""
+        p, sr, j = T.postings, T.search_runs, T.jobs
+        q = (select(p.c.job_id, p.c.source, sr.c.search_name)
+             .select_from(p.outerjoin(sr, sr.c.search_run_id == p.c.first_search_run_id).join(j, j.c.job_id == p.c.job_id))
+             .where(j.c.archived_at.is_(None)))
+        out: dict[int, set[str]] = {}
+        with self.engine.connect() as conn:
+            for job_id, source, search in conn.execute(q):
+                scope = out.setdefault(job_id, set())
+                scope.add(source)
+                if search:
+                    scope.add(f"{source}/{search}")
+        return out
+
     def archived_description(self, job_id: int) -> str:
         with self.engine.connect() as conn:
             return unz(conn.execute(select(T.jobs.c.archive_description).where(T.jobs.c.job_id == job_id)).scalar())

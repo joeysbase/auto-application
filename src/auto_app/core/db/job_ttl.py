@@ -1,4 +1,4 @@
-"""Job TTL (C11, docs/step1-collect.md §9.1–9.2), applied by `auto-app purge`.
+"""Job TTL (C11, docs/step1-collect.md §9.1–9.2), applied by `auto-app data purge`.
 
 A job expires `jobs.ttl_days[state]` days after any of its postings was last seen:
 - not evaluated / un_recommended → **deleted**: the job, its keys and locations, and every linked posting

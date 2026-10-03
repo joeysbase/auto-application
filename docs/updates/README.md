@@ -9,6 +9,11 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-03 | Commands grouped: `auto-app source · collect · process · job · filter · data <command>` (+ `run`, `schedule`); old names removed | 1–2 | ✅ done | [2026-10-03-command-groups](2026-10-03-command-groups.md) |
+| 2026-10-03 | Step 2: DeepSeek runner — `deepseek-…` models with `DEEPSEEK_API_KEY` (our web_fetch; no web_search) | 2 | ✅ done (offline-tested) | [2026-10-03-deepseek-runner](2026-10-03-deepseek-runner.md) |
+| 2026-10-03 | Step 2: `claude-cli` runner (your Claude Code login, no API key; locked down; `runner: auto` default) | 2 | ✅ done (verified live) | [2026-10-03-claude-cli-runner](2026-10-03-claude-cli-runner.md) |
+| 2026-10-03 | Global settings + `ANTHROPIC_API_KEY` in `.env` (`AUTO_APP_…`, `__` nesting); `searches.yaml` = what to search only | all | ✅ done | [2026-10-03-env-settings](2026-10-03-env-settings.md) |
+| 2026-10-03 | Step 2 S2: agent runner (Claude API tool loop, LinkedIn blocked, budgets), answer parsing, `judgments`, `select`, `why`, `--reparse` | 2 | ✅ done (offline-tested) | [2026-10-03-s2-agent-select](2026-10-03-s2-agent-select.md) |
 | 2026-10-02 | Step 2 S1: filters — folder loader + validation, versions, job details, `filters` command (`--job` preview), examples | 2 | ✅ done | [2026-10-02-s1-filters](2026-10-02-s1-filters.md) |
 | 2026-10-01 | Design: Step 2 simplified — filters (folder: command + settings + optional parser) — an agent runs the command on each job; OR-ed with a preference model later | 2 | 📐 designed | [2026-10-01-step2-redesign](2026-10-01-step2-redesign.md) |
 | 2026-10-01 | C11: job state (`step2` + `decision`), job TTL (delete / archive), archived records, repost warnings, `mark`; atomic migrations | 1 | ✅ done | [2026-10-01-c11-job-state-ttl](2026-10-01-c11-job-state-ttl.md) |
@@ -43,7 +48,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 | Feature | Step | Design |
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
-| Step 2: select — S2 agent judgment (runner, parsers, `select`, `why`), S3 review (preference model later) | 2 | [step2](../step2-select.md) |
+| Step 2: first real `filter run`; S3 `filter review` (preference model later) | 2 | [step2](../step2-select.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).
 

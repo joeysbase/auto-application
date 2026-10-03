@@ -99,10 +99,10 @@ def format_pipeline(res: PipelineResult, store) -> str:
         out.append(f"== dedup      {p.new_postings} new postings → {len(res.created)} new jobs, {joined} joined existing jobs "
                    f"({p.duplicates} same-source duplicates), {len(p.near_misses)} near misses")
     if hasattr(store, "jobs"):
-        out.append(f"   jobs now   {len(store.jobs())}  ·  `auto-app jobs`")
+        out.append(f"   jobs now   {len(store.jobs())}  ·  `auto-app job list`")
     else:
         out.append("   (debug files only: dedup was a preview — jobs and purge need the database; "
-                   "load these files with `auto-app import-files`)")
+                   "load these files with `auto-app data import`)")
     if res.purge:
         out += ["", "== " + res.purge.format()]
     if res.problems:

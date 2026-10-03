@@ -40,11 +40,11 @@ Detailed history: [updates/](updates/README.md).
 | Plugin system: **each plugin is one source** — discovery and load-time checks, filter capabilities, `plan`, `plugins`; config `sources.<plugin>.searches` + `limits`, `from:` copying (older layouts auto-migrated) | ✅ implemented (C12) |
 | Platform bases Ashby, Greenhouse, Lever, Workday; one plugin file per company (`plugins/companies/`), written by `add-company` | ✅ implemented; live: UiPath (Ashby), NVIDIA + Adobe (Workday), Palantir (Lever), Anthropic (Greenhouse, via `add-company`) |
 | Company browser plugins (Microsoft…) | interface ready (§2.2); implementations left to whoever needs them |
-| Parse: LinkedIn + Ashby, Greenhouse, Lever, Workday; default JSON-LD parser for other browser plugins; `auto-app parse` with coverage | ✅ implemented; all 46 saved postings parse (41 LinkedIn, 5 NVIDIA) |
-| Normalize: employer job key, company aliases, title/location/description keys, MinHash; `auto-app normalize` | ✅ implemented; all 46 saved postings normalized |
+| Parse: LinkedIn + Ashby, Greenhouse, Lever, Workday; default JSON-LD parser for other browser plugins; `auto-app process parse` with coverage | ✅ implemented; all 46 saved postings parse (41 LinkedIn, 5 NVIDIA) |
+| Normalize: employer job key, company aliases, title/location/description keys, MinHash; `auto-app process normalize` | ✅ implemented; all 46 saved postings normalized |
 | Dedup: Level 1b + Level 2 with merge vetoes, near misses; `dedup --preview` (dry run) | ✅ implemented; calibration waits for overlapping data |
-| Dedup writing jobs, incrementally: `auto-app dedup`, `auto-app jobs`, `dedup --rebuild` | ✅ implemented; 12 postings → 10 jobs stored |
-| Purge (retention) + storage-light defaults (C9): `auto-app purge` | ✅ implemented |
+| Dedup writing jobs, incrementally: `auto-app process dedup`, `auto-app job list`, `dedup --rebuild` | ✅ implemented; 12 postings → 10 jobs stored |
+| Purge (retention) + storage-light defaults (C9): `auto-app data purge` | ✅ implemented |
 | Job state model (`step2` + `decision`), job TTL with delete / archive, archived records, repost warnings, `mark` (C11) | ✅ implemented (§7.5, §8.2, §9); migration applied to the existing database (68 jobs) |
 | One-command pipeline + schedule (C10): `auto-app run`, `auto-app schedule` | ✅ implemented (schedule not installed yet) |
 
@@ -102,7 +102,7 @@ class WorkdaySource(ApiSource):
     platform = "workday"
     ...                             # search, facets, detail, parse
 
-# plugins/companies/nvidia.py — a company source (written by `auto-app add-company`)
+# plugins/companies/nvidia.py — a company source (written by `auto-app source add`)
 class Nvidia(WorkdaySource):
     name = "nvidia"
     company = "NVIDIA"
@@ -130,7 +130,7 @@ At startup the app registers the built-in job sites and imports every `*.py` und
 - the name is lowercase letters, digits, `-`, `_`, and unique;
 - a platform-based plugin has a `company` and a valid `board` (normalized once — e.g. a Workday URL with `/en-US/` loses the locale).
 
-A file that fails (import error, bad board, duplicate name) is **reported, not fatal**: it's listed by `auto-app plugins` and named in the error when the config refers to it; every other source still runs. `auto-app plugins` lists sources (name, job site or company + platform, file) and the available platforms; `auto-app plugins <source or platform>` shows supported search fields and `site_filters`.
+A file that fails (import error, bad board, duplicate name) is **reported, not fatal**: it's listed by `auto-app source show` and named in the error when the config refers to it; every other source still runs. `auto-app source list` lists sources (name, job site or company + platform, file) and the available platforms; `auto-app source show <source or platform>` shows supported search fields and `site_filters`.
 
 Company plugin files are **committed** with the code: they hold no personal data (a company name and a public board URL). What you search for, your limits and logins stay in git-ignored files.
 
@@ -231,7 +231,7 @@ Rules:
 - **Not sortable by date** (`sorted_by_date = False`) → early stop off; `max_pages` alone limits depth.
 - Deferred fields are recorded with each search run (`search_runs.query.deferred`) and shown by `plan`. Step 2 doesn't re-apply search fields: preferences that matter beyond the search go in your Step 2 command, which the agent runs for every job ([step2 §2.1](step2-select.md#21-commandmd--run-for-every-job)).
 
-`auto-app plan` (and the start of every `collect`) prints where each field is applied:
+`auto-app source plan` (and the start of every `collect`) prints where each field is applied:
 
 ```
 linkedin  (job site)
@@ -255,8 +255,8 @@ nvidia  (company NVIDIA · workday, board https://nvidia.wd5.myworkdayjobs.com/N
 
 ### 2.6 Adding a company
 
-- `auto-app add-company <careers URL> [--name NAME] [--company "Display Name"]` — detects a known platform from the URL or the page's links/embeds (`jobs.ashbyhq.com/<board>`, `boards.greenhouse.io/<board>`, `jobs.lever.co/<board>`, `*.myworkdayjobs.com`, …), test-calls it (prints the number of open jobs), writes **`plugins/companies/<name>.py`** (a subclass of the platform base with `name`, `company`, `board`) and adds a commented search stub under `sources: <name>:` in the config, pointing at your first search for `from:`. Nothing runs for that source until you add a search. If no platform is recognized, it says a company plugin is needed. **Limitation:** many marketing careers pages (e.g. anthropic.com/careers, careers.adobe.com) load their job lists with JavaScript, so the platform link isn't in the fetched HTML — pass the job-board URL instead (open any job's *Apply* page to find it, e.g. `adobe.wd5.myworkdayjobs.com/external_experienced`).
-- A company on its own career site: write `plugins/companies/<name>.py` by hand — an `ApiSource` or `SourceAdapter` subclass with `company` set (planned helper: `auto-app new-plugin <name> --kind browser|api`, scaffolding the file, a test and `tests/fixtures/<name>/`).
+- `auto-app source add <careers URL> [--name NAME] [--company "Display Name"]` — detects a known platform from the URL or the page's links/embeds (`jobs.ashbyhq.com/<board>`, `boards.greenhouse.io/<board>`, `jobs.lever.co/<board>`, `*.myworkdayjobs.com`, …), test-calls it (prints the number of open jobs), writes **`plugins/companies/<name>.py`** (a subclass of the platform base with `name`, `company`, `board`) and adds a commented search stub under `sources: <name>:` in the config, pointing at your first search for `from:`. Nothing runs for that source until you add a search. If no platform is recognized, it says a company plugin is needed. **Limitation:** many marketing careers pages (e.g. anthropic.com/careers, careers.adobe.com) load their job lists with JavaScript, so the platform link isn't in the fetched HTML — pass the job-board URL instead (open any job's *Apply* page to find it, e.g. `adobe.wd5.myworkdayjobs.com/external_experienced`).
+- A company on its own career site: write `plugins/companies/<name>.py` by hand — an `ApiSource` or `SourceAdapter` subclass with `company` set (planned helper: `auto-app source new-plugin <name> --kind browser|api`, scaffolding the file, a test and `tests/fixtures/<name>/`).
 - Each plugin is tested offline against saved API responses / pages.
 
 ### 2.7 Source notes
@@ -280,7 +280,7 @@ nvidia  (company NVIDIA · workday, board https://nvidia.wd5.myworkdayjobs.com/N
 
 | Term | Meaning | Stored in |
 |---|---|---|
-| **Batch** | One `auto-app collect` run | `batches` |
+| **Batch** | One `auto-app collect run` run | `batches` |
 | **Search run** | One search on one source within a batch: *job site* = site × keyword × location (`search_name` = the job-site search); *company* = one company search (`search_name` = `<company>` or `<company>/<search>`) | `search_runs` |
 | **Search result / sighting** | One card (browser) or one matching job (API) seen by a search run, with its outcome | `search_results` |
 | **Posting** | One job on one source, saved once (first time its page/record is fetched) | `postings` + `posting_raw` |
@@ -339,7 +339,7 @@ Before searches, each source re-fetches cards whose latest outcome was `fetch_fa
 ### 3.6 Sessions and login
 
 - One persistent Chrome profile per source: `browser-profiles/<source>/`.
-- `auto-app login <source>` opens **plain Chrome** (no automation flags, so Google/SSO sign-in works) with `--use-mock-keychain` (the same cookie-encryption key Playwright uses — otherwise the collector can't read the saved login). The user logs in and quits that Chrome with **Cmd+Q** (flushes cookies); the app then verifies the session headlessly.
+- `auto-app source login <source>` opens **plain Chrome** (no automation flags, so Google/SSO sign-in works) with `--use-mock-keychain` (the same cookie-encryption key Playwright uses — otherwise the collector can't read the saved login). The user logs in and quits that Chrome with **Cmd+Q** (flushes cookies); the app then verifies the session headlessly.
 - Before each run, `check_session` loads a logged-in page; if redirected to login → `needs_login`, source skipped, notification.
 - Sources that need no login (API plugins, Microsoft) skip this.
 
@@ -394,7 +394,7 @@ Measured on LinkedIn: ~400 KB per job with everything on (HTML 229 KB, screensho
 
 ## 5. Parse
 
-Each plugin's `parse(raw: RawPosting) -> CommonPosting` turns saved raw data into common fields; `auto-app parse` runs it over postings: `fetched` → `parsed` (`parsed.json` written next to the raw files) or `parse_failed` (reason recorded; raw kept for a fix + re-parse). Parsers never touch the network and are tested against saved real pages/records.
+Each plugin's `parse(raw: RawPosting) -> CommonPosting` turns saved raw data into common fields; `auto-app process parse` runs it over postings: `fetched` → `parsed` (`parsed.json` written next to the raw files) or `parse_failed` (reason recorded; raw kept for a fix + re-parse). Parsers never touch the network and are tested against saved real pages/records.
 
 **Interface.** `RawPosting` gives a parser everything saved for one posting: `capture`, `card`, and — browser sources — `page_text`, `html`, `payloads`, `embedded`; API sources — `record`, `detail`; plus `company_hint` (a company source's `company` name from its plugin). Each plugin declares `parser_version`; a posting is re-parsed automatically when its parser's version changes (or with `--reparse`), and failed postings are retried every run. Browser plugins without their own parser get the default: the page's schema.org `JobPosting` (JSON-LD), which many career sites embed.
 
@@ -415,7 +415,7 @@ Each plugin's `parse(raw: RawPosting) -> CommonPosting` turns saved raw data int
 
 **LinkedIn** is parsed from the page's visible text, anchored on stable text rather than LinkedIn's generated class names: company line, title line, `<location> · <posted> ago · <applicants>`, then salary / workplace / employment lines until the action buttons, and the description between "About the job" and the first end marker ("… more", "Set alert for similar jobs", "About the company").
 
-`auto-app parse` prints field coverage per source — the quickest check of what a parser gets right:
+`auto-app process parse` prints field coverage per source — the quickest check of what a parser gets right:
 ```
 source       ok fail   title company location description posted workplace employment salary apply_url
 linkedin     41    0    100%    100%     100%        100%   100%      100%       100%    46%       85%
@@ -426,7 +426,7 @@ nvidia        5    0    100%    100%     100%        100%   100%       20%      
 
 ## 6. Normalize
 
-Computed from parsed fields → state `normalized`, written to `normalized.json` per posting (`src/auto_app/process/normalize.py`). Versioned (`NORMALIZER_VERSION`): postings are normalized again when the rules change or the posting was re-parsed. Cross-source dedup is only possible on normalized postings: each source presents the same job differently. `auto-app normalize` prints, per source, the share of postings with an employer key and how each company was resolved. It works on each posting independently and never compares postings — finding duplicates (including shared employer keys) is dedup's job (`auto-app dedup --preview`).
+Computed from parsed fields → state `normalized`, written to `normalized.json` per posting (`src/auto_app/process/normalize.py`). Versioned (`NORMALIZER_VERSION`): postings are normalized again when the rules change or the posting was re-parsed. Cross-source dedup is only possible on normalized postings: each source presents the same job differently. `auto-app process normalize` prints, per source, the share of postings with an employer key and how each company was resolved. It works on each posting independently and never compares postings — finding duplicates (including shared employer keys) is dedup's job (`auto-app process dedup --preview`).
 
 | Key | Rule | Sources |
 |---|---|---|
@@ -487,13 +487,13 @@ A shared employer job key overrides the vetoes (it is the same job id on the emp
 4. **Learn aliases** from exact matches (§6).
 
 ### 7.4.1 Incremental linking (implemented: `src/auto_app/process/link.py`)
-`auto-app dedup` links only **postings not yet linked to a job**; earlier links are sticky:
+`auto-app process dedup` links only **postings not yet linked to a job**; earlier links are sticky:
 1. **Level 1b** — a new posting that is an exact same-source copy (same employer key, or same company + title + description hash) of an earlier posting, already linked or new, becomes its `duplicate_of` and joins that posting's job.
 2. **Level 2** — the other new postings are grouped among themselves (rules §7.3, merge vetoes incl. Level 1b copies), then each group is compared with existing jobs through their postings (blocked by employer key, company, description hash). The group **joins the best-matching job** unless any of its postings is vetoed by any posting of that job (reported as a near miss: "match to job #N blocked: …"); otherwise it **becomes a new job**.
 3. **Active jobs keep their ids and state** (a repost of an active recommended job attaches to it and keeps its Step 2 result and your decision). **Archived jobs are never candidates** (§7.5, §9). For every job that gained postings, the primary posting (company source > external apply > Easy Apply), canonical apply URL, company/title, first/last-seen dates, `job_keys` (employer key, company|req id, description hash, company|title fingerprint) and `job_locations` are updated.
 4. Each posting records how it was linked: `match_rule` (`new_job`, `employer_key`, `req_id`, `description`, `desc_hash`, `probable`, `1b:employer_key`, `1b:desc_hash`) and `match_confidence`; state becomes `linked`.
 
-`dedup --preview` runs the same plan without writing. `dedup --rebuild` unlinks everything and regroups from scratch — refused once any job has been evaluated by Step 2 (C11; today: once any status is beyond `collected`), so Step 2/3 decisions are never lost. `auto-app jobs` lists jobs; `auto-app jobs <id>` shows a job's postings (and how each was linked), keys and locations; `inspect <source> <id>` shows a posting's job.
+`dedup --preview` runs the same plan without writing. `dedup --rebuild` unlinks everything and regroups from scratch — refused once any job has been evaluated by Step 2 (C11; today: once any status is beyond `collected`), so Step 2/3 decisions are never lost. `auto-app job list` lists jobs; `auto-app job list <id>` shows a job's postings (and how each was linked), keys and locations; `inspect <source> <id>` shows a posting's job.
 
 ### 7.5 Reposts, history and archived jobs
 - Same ID → `known`, not re-fetched (optional: refresh when marked "Reposted" and last fetched > 14 days ago). This also holds for postings of **archived** jobs: the listing is not fetched again and the archived job **stays archived** (its posting's last-seen date is updated; the job is not revived).
@@ -504,7 +504,7 @@ A shared employer job key overrides the vetoes (it is the same job id on the emp
 
 ### 7.6 Rollout and calibration
 1. **Parse** (C6) and **normalize** (C8a), with `employer_job_key()` tested on the real saved LinkedIn apply URLs and company postings.
-2. **Preview** (C8b, ✅ `src/auto_app/process/dedup.py`): `auto-app dedup --preview [--json FILE]` runs 1b + 2 on the current files and lists the jobs it would form — members, primary posting (★), each link's rule and confidence, locations — plus **near misses**: same-company pairs whose descriptions overlap between the veto and match thresholds, matching descriptions with differing titles, same titles blocked by a veto, and merges refused at grouping. Nothing is written. Candidates are compared only within blocks (same employer key, company, or description hash). On the current data: 46 postings → 45 jobs (the Intuitive Machines LinkedIn pair, via Level 1b), 0 near misses.
+2. **Preview** (C8b, ✅ `src/auto_app/process/dedup.py`): `auto-app process dedup --preview [--json FILE]` runs 1b + 2 on the current files and lists the jobs it would form — members, primary posting (★), each link's rule and confidence, locations — plus **near misses**: same-company pairs whose descriptions overlap between the veto and match thresholds, matching descriptions with differing titles, same titles blocked by a veto, and merges refused at grouping. Nothing is written. Candidates are compared only within blocks (same employer key, company, or description hash). On the current data: 46 postings → 45 jobs (the Intuitive Machines LinkedIn pair, via Level 1b), 0 near misses.
 3. **Calibration data:** overlapping runs — a LinkedIn search that returns the tracked companies (NVIDIA, Adobe, UiPath) plus `collect --companies` with a wider posted-within window (e.g. 7 days). Tune the 0.95 / 0.5 containment thresholds on labeled groups.
 4. **Database** (C7), then dedup writes `jobs`, `job_locations`, `job_keys` (C8c).
 
@@ -519,7 +519,7 @@ Every stage talks to one storage interface (`src/auto_app/collect/store.py`), ad
 | Store | Where | Role |
 |---|---|---|
 | **`DbStore`** (`core/db/store.py`) | `data/auto_app.db` (SQLite, WAL) | **the source of truth**, used by every command |
-| **`FileStore`** | `data/raw/` (folders, JSON, HTML) | **file-only debug mode**: with `--debug-files` (or `debug_files: true`) every command uses the file store **instead of** the database — nothing is written to the database. Jobs live only in the database, so dedup can only preview (`run` previews its dedup step) and `jobs`, `purge`, `export`, `import-files` refuse. `export <source> <id>` writes one database posting as files; `import-files` loads a file store into the database |
+| **`FileStore`** | `data/raw/` (folders, JSON, HTML) | **file-only debug mode**: with `--debug-files` (or `AUTO_APP_DEBUG_FILES=true` in `.env`) every command uses the file store **instead of** the database — nothing is written to the database. Jobs live only in the database, so dedup can only preview (`run` previews its dedup step) and `jobs`, `purge`, `export`, `import-files` refuse. `export <source> <id>` writes one database posting as files; `import-files` loads a file store into the database |
 
 Both implementations run the same tests (collection on the fake site, company collection, parse and normalize stages run once per store).
 
@@ -566,25 +566,24 @@ company_aliases (alias_norm PK, company_norm, origin)   -- learned aliases
 - The file store under `data/raw/` from `--debug-files` runs.
 
 ### 8.4 Moving data
-- `auto-app import-files [--from DIR]`: batches (runs, sightings, card HTML, logs, failure artifacts), postings (raw, parsed, normalized, screenshot paths), source health and learned aliases. Idempotent — what's already in the database is skipped. Search-run ids are renumbered (the database's are global) and postings' first-run references are remapped.
-- `auto-app export <source> <job_id> [--to DIR]`: one posting, in the file store's layout.
+- `auto-app data import [--from DIR]`: batches (runs, sightings, card HTML, logs, failure artifacts), postings (raw, parsed, normalized, screenshot paths), source health and learned aliases. Idempotent — what's already in the database is skipped. Search-run ids are renumbered (the database's are global) and postings' first-run references are remapped.
+- `auto-app data export <source> <job_id> [--to DIR]`: one posting, in the file store's layout.
 
 ---
 
 ## 9. Retention (TTL)
 
-Two kinds of expiry, both applied by `auto-app purge` (and `run --purge`, the schedule): a **job TTL** that deletes or archives whole jobs, and **posting-data retention** that drops heavy data from live postings.
+Two kinds of expiry, both applied by `auto-app data purge` (and `run --purge`, the schedule): a **job TTL** that deletes or archives whole jobs, and **posting-data retention** that drops heavy data from live postings.
 
 ### 9.1 Job TTL (C11, implemented: `src/auto_app/core/db/job_ttl.py`)
 
 One global setting; the clock is the time since **any** of the job's postings was last seen (each purge first recomputes every job's `last_seen_at` from its postings — postings' dates are refreshed whenever collect sees them, including as `known`):
 
-```yaml
-jobs:
-  ttl_days:
-    unfiltered: 14        # not evaluated by Step 2 yet → deleted
-    un_recommended: 7     # Step 2 left it out → deleted
-    recommended: 30       # undecided, applied or not applied → archived
+```bash
+# .env (global settings; template .env.example)
+AUTO_APP_JOBS__TTL_DAYS__UNFILTERED=14        # not evaluated by Step 2 yet → deleted
+AUTO_APP_JOBS__TTL_DAYS__UN_RECOMMENDED=7     # Step 2 left it out → deleted
+AUTO_APP_JOBS__TTL_DAYS__RECOMMENDED=30       # undecided, applied or not applied → archived
 ```
 
 | State (README §3) | After its TTL |
@@ -592,14 +591,14 @@ jobs:
 | not evaluated, un_recommended | **deleted**: the job, its `job_keys`, `job_locations`, and **every linked posting** (incl. Level 1b duplicates) with its raw data and screenshot — in one transaction |
 | recommended (undecided, applied, not applied) | **archived** (9.2) |
 
-- `expires_at` (= `last_seen_at` + the state's TTL) is kept on every active job; `auto-app jobs` shows "in N d" (`due` = the next purge acts on it) and flags recommended-undecided jobs (`!`) 3 days before they're archived.
-- Until Steps 2–3 exist, `auto-app mark JOB… --as STATE` sets the state by hand (`applied` / `not_applied` also mark the job recommended).
+- `expires_at` (= `last_seen_at` + the state's TTL) is kept on every active job; `auto-app job list` shows "in N d" (`due` = the next purge acts on it) and flags recommended-undecided jobs (`!`) 3 days before they're archived.
+- Until Steps 2–3 exist, `auto-app job mark JOB… --as STATE` sets the state by hand (`applied` / `not_applied` also mark the job recommended).
 - `dedup` only refreshes `last_seen_at` / `expires_at`; deleting and archiving happen in `purge`, and `purge --dry-run` lists the jobs it would delete or archive.
 - Caveat: "not seen" isn't always "closed". Company sources with `posted_within_days: all` re-list every open job each run; LinkedIn searches only show recent postings and stop early, so a still-open LinkedIn job can stop being seen and expire.
 
 ### 9.2 Archived jobs
 
-An archived job is a **record**: kept, hidden from `auto-app jobs` by default (`--archived` lists them), and **excluded from dedup** (§7.5). Only what's needed is kept (≈ 1 KB per job; a few KB with a description):
+An archived job is a **record**: kept, hidden from `auto-app job list` by default (`--archived` lists them), and **excluded from dedup** (§7.5). Only what's needed is kept (≈ 1 KB per job; a few KB with a description):
 
 | Kept | Dropped |
 |---|---|
@@ -612,7 +611,7 @@ An archived job is a **record**: kept, hidden from `auto-app jobs` by default (`
 
 ### 9.3 Posting-data retention (C9, implemented)
 
-`src/auto_app/core/db/purge.py`, settings under `retention:` in the config. (The earlier `description_days` rule was retired by C11 — the job TTL deletes or archives jobs instead; old configs that still set it load and ignore it.)
+`src/auto_app/core/db/purge.py`, settings `AUTO_APP_RETENTION__*` in `.env` (global settings moved there 2026-10-03). (The earlier `description_days` rule was retired by C11 — the job TTL deletes or archives jobs instead; old configs that still set it load and ignore it.)
 
 | Data | Rule (default) | After |
 |---|---|---|
@@ -626,31 +625,35 @@ Files from `--debug-files` runs (`data/raw/`) are not purged (purge needs the da
 
 ## 10. CLI
 
+Grouped commands (2026-10-03): `auto-app <group> <command>`; a group alone shows its help.
+
 ```
-auto-app login <source>                      # plain Chrome; quit with Cmd+Q to save
-auto-app collect [-s SOURCE]… [--job-sites | --companies] [--search NAME]…   # -c = -s (old scripts)
-                 [--max-pages N] [--cards-only] [--ignore-known]
-                 [--interactive] [--manual-checks] [--capture-all-json] [--headless] [--force] [--scheduled]
-auto-app probe <source> <job id | URL>       # fetch one job, show what was captured
-auto-app inspect [SOURCE [JOB_ID]]           # saved postings
-auto-app stats [BATCH]                       # search runs, outcomes, pauses
-auto-app sources [--reset SOURCE]            # ok / needs_login / cooldown
-auto-app plugins [SOURCE | PLATFORM] | plan [-s SOURCE]…
-auto-app add-company <url> [--name NAME] [--company TEXT]   # writes plugins/companies/NAME.py + a config stub
-auto-app parse [-s SOURCE]… [--reparse]         # field coverage per source
-auto-app normalize [-s SOURCE]… [--again]     # each posting's dedup keys
-auto-app dedup [--preview] [--rebuild] [--no-near-misses]   # link new postings to jobs; --preview = dry run
-auto-app jobs [JOB_ID] [-s SOURCE] [-c TEXT] [--state S] [--archived] [--limit N]   # jobs, newest first; one job in detail
-auto-app mark JOB_ID... --as recommended|un_recommended|applied|not_applied|not_evaluated   # set state by hand
-# planned
-auto-app new-plugin <name> --kind api|browser
-auto-app import-files [--from DIR]           # load a file store (data/raw/) into the database; safe to re-run
-auto-app export <source> <job_id> [--to DIR] # one posting from the database as files
-auto-app --debug-files <command> …           # files under data/raw/ instead of the database (or `debug_files: true`)
+auto-app source list | show <SOURCE|PLATFORM>                 # sources (one plugin each), platforms, search options
+auto-app source add <url> [--name NAME] [--company TEXT]      # writes plugins/companies/NAME.py + a config stub
+auto-app source login <source>                                # plain Chrome; quit with Cmd+Q to save
+auto-app source health [--reset SOURCE]                       # ok / needs_login / cooldown
+auto-app source plan [-s SOURCE]… [--job-sites|--companies] [--search NAME]…   # what collect would run, per field
+auto-app collect run [-s SOURCE]… [--job-sites | --companies] [--search NAME]…
+                     [--max-pages N] [--cards-only] [--ignore-known]
+                     [--interactive] [--manual-checks] [--capture-all-json] [--headless] [--force] [--scheduled]
+auto-app collect probe <source> <job id | URL>                # fetch one job, show what was captured
+auto-app collect stats [BATCH]                                # search runs, outcomes, pauses
+auto-app process parse [-s SOURCE]… [--reparse]               # field coverage per source
+auto-app process normalize [-s SOURCE]… [--again]             # each posting's dedup keys
+auto-app process dedup [--preview] [--rebuild] [--no-near-misses]   # link new postings to jobs; --preview = dry run
 auto-app run [-s SOURCE]… [--job-sites|--companies] [--no-collect] [--purge] [--scheduled] [--headless]
-                                             # collect → parse → normalize → dedup (→ purge); one run at a time (data/run.lock)
-auto-app purge [--dry-run] [--vacuum]        # job TTL (delete / archive), then posting-data retention (§9)
+                                                              # collect → parse → normalize → dedup (→ purge); one at a time
 auto-app schedule install --at HH:MM… [--headless] [--dry-run] | show | remove   # macOS launchd: `run --scheduled --purge`
+auto-app job list [-s SOURCE] [-c TEXT] [--state S] [--archived] [--limit N]    # jobs, newest first
+auto-app job show <JOB_ID>                                    # one job in detail
+auto-app job mark <JOB_ID>... --as recommended|un_recommended|applied|not_applied|not_evaluated
+auto-app data inspect [SOURCE [JOB_ID]]                       # saved postings
+auto-app data export <source> <job_id> [--to DIR]             # one posting from the database as files
+auto-app data import [--from DIR]                             # load a file store (data/raw/) into the database
+auto-app data purge [--dry-run] [--vacuum]                    # job TTL (delete / archive), then posting-data retention (§9)
+auto-app --debug-files <group> <command> …                    # files under data/raw/ instead of the database
+# planned
+auto-app source new-plugin <name> --kind api|browser
 ```
 
 ---

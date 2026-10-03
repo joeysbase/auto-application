@@ -222,7 +222,7 @@ class SourceCollector(CollectorBase):
             raise HardBlock(f"session check page failed to load: {e}") from e
         status = await self.adapter.check_session(self.results)
         if status == "needs_login":
-            raise NeedsLogin(f"not logged in (checked {self.results.url}); run `auto-app login {self.name}`")
+            raise NeedsLogin(f"not logged in (checked {self.results.url}); run `auto-app source login {self.name}`")
         if status == "unknown":
             log.warning("%s: could not confirm login state; continuing", self.name)
         else:

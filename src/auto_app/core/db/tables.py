@@ -184,3 +184,48 @@ company_aliases = Table(
     Column("company_norm", String, nullable=False),
     Column("origin", String),  # learned | config
 )
+
+# ---- Step 2 (docs/step2-select.md §9) ----------------------------------------------------------
+
+filter_versions = Table(  # what each filter version ran: the exact command, files and settings
+    "filter_versions", metadata,
+    Column("filter_version", String, primary_key=True),
+    Column("filter", String, nullable=False, index=True),
+    Column("command", Text, nullable=False),
+    Column("files", JSON),  # {relative path: text}
+    Column("settings", JSON),  # filter.yaml's versioned settings
+    Column("created_at", Ts, nullable=False),
+)
+
+judgments = Table(  # one agent run of one filter version on one job
+    "judgments", metadata,
+    Column("job_id", Integer, ForeignKey("jobs.job_id"), primary_key=True),
+    Column("filter_version", String, ForeignKey("filter_versions.filter_version"), primary_key=True),
+    Column("filter", String, nullable=False, index=True),
+    Column("model", String),
+    Column("status", String, nullable=False),  # ok | unparsed | error
+    Column("answer", Text),  # the raw final answer
+    Column("recommend", Boolean),  # parsed output; NULL = couldn't read (or error)
+    Column("reason", Text),
+    Column("parser", String),  # "convention" or "parser.py:<hash>"
+    Column("parse_error", Text),
+    Column("error", Text),  # the run's error, when status = error
+    Column("trace", LargeBinary),  # zstd JSON: every model turn and tool call
+    Column("input_tokens", Integer),
+    Column("output_tokens", Integer),
+    Column("tool_calls", Integer),
+    Column("cost_usd", Float),  # NULL when the model has no price configured
+    Column("created_at", Ts, nullable=False),
+    Column("parsed_at", Ts),
+)
+
+reviews = Table(  # your decisions in review = training labels (S3)
+    "reviews", metadata,
+    Column("review_id", Integer, primary_key=True, autoincrement=True),
+    Column("job_id", Integer),  # no FK: labels outlive the job (TTL)
+    Column("decision", String, nullable=False),  # applied | not_applied
+    Column("reason", Text),
+    Column("filters", JSON),  # the filters that judged it, with their verdicts
+    Column("job_text", Text),  # title + company + description, kept for training
+    Column("created_at", Ts, nullable=False),
+)

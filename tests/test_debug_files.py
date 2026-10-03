@@ -46,8 +46,8 @@ async def test_run_in_file_mode_writes_no_database(tmp_path):
 def test_commands_that_need_the_database_refuse_clearly(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTO_APP_HOME", str(tmp_path))
     r = CliRunner()
-    for args in (["jobs"], ["dedup"], ["purge"], ["import-files"], ["export", "x", "1"]):
+    for args in (["job", "list"], ["process", "dedup"], ["data", "purge"], ["data", "import"], ["data", "export", "x", "1"]):
         out = r.invoke(app, ["--debug-files", *args])
         assert out.exit_code == 2 and "needs the database" in out.output, args
-    assert r.invoke(app, ["--debug-files", "dedup", "--preview"]).exit_code == 0
+    assert r.invoke(app, ["--debug-files", "process", "dedup", "--preview"]).exit_code == 0
     assert not (tmp_path / "data" / "auto_app.db").exists()
