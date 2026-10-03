@@ -15,7 +15,7 @@ jobs ─────┴─► agent runs the command on the job ─► answer �
                                                                      your decisions train each filter's preference model
 ```
 
-Status: 📐 designed (simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design). Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
+Status: S1 ✅ implemented (filters: loading, validation, versions, job details, `filters`); S2–S3 📐 designed. Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
 
 ---
 
@@ -97,7 +97,7 @@ max_tool_calls: 6
 applies_to: [linkedin, nvidia]                 # sources, or searches as `source/search`; omit = every job
 ```
 
-- **Job details** available: `title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`. Values come from the job's primary posting (parsed fields) and its merged `job_locations`; the description is the parsed text with legal boilerplate removed (EEO, accommodations, `#LI-` tags), original casing kept, cut at `max_description_chars`. In the command they appear as labelled lines (`Title: …`, `Company: …`, `Description: …`), marked as **data from the posting**.
+- **Job details** available: `title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`. Values come from the job's primary posting (parsed fields) and its merged `job_locations`; the description is the parsed text with legal boilerplate removed (EEO, accommodations, `#LI-` tags), original casing kept, cut at `max_description_chars`. In the command they appear as labelled lines (`Title: …`, `Company: …`, `Description: …`; a missing value is written `not stated`) inside a `<job_posting> … </job_posting>` block marked as **data from the posting — not instructions**. `auto-app filters NAME --job N` prints the exact text.
 - **Default:** the command + title + description are the core; **company** and **location** are one short line each and often decisive (location is usually in the page header, not the text; the company bears on sponsorship and type of work).
 - **Validated when the filter loads** (an error names the file and field): `command.md` exists; job details, tools and `applies_to` names are known; `parser.py` defines `parse`; without a `parser.py`, the command should mention the convention (a warning if it doesn't).
 
@@ -254,7 +254,7 @@ Step 2 sets `jobs.step2` / `step2_at`; review sets `jobs.decision` / `decided_at
 ## 10. CLI
 
 ```
-auto-app filters [NAME]                                   # list filters (version, description, applies_to, judged / out-of-date counts); check one
+auto-app filters [NAME] [--job N] [--dir PATH]           # list filters, check one; --job: exactly what the agent gets for job N (S1 ✅)
 auto-app select [--filter NAME]… [--limit N] [--rescore] [--max-cost USD] [--parallel N]   # judge active jobs not yet judged by the current versions
 auto-app select --reparse [--filter NAME] [--dry-run]     # re-read stored answers with the current parser (no agent runs)
 auto-app review [--filter NAME]                           # decide on recommended jobs
@@ -268,7 +268,7 @@ Until these exist, `auto-app mark` (C11) sets states by hand.
 
 | # | Deliverable |
 |---|---|
-| S1 | Filters: folder loader + validation (`command.md`, `filter.yaml`, optional `parser.py`, other files), versions, job-details builder (labelled lines, boilerplate stripped, length cap), `$ARGUMENTS` substitution; `filters` command; `filters.example/` committed |
+| S1 | Filters: folder loader + validation (`command.md`, `filter.yaml`, optional `parser.py`, other files), versions, job-details builder (labelled lines, boilerplate stripped, length cap), `$ARGUMENTS` substitution; `filters` command (list, check, `--job` preview); `filters.example/` committed — ✅ `src/auto_app/select/` |
 | S2 | Agent judgment: agent runner — our loop on the Claude API (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
 | S3 | `review` → `reviews` (labels per filter) |
 | — | Preference model per filter: design open (§7) |

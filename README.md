@@ -2,7 +2,7 @@
 
 A personal pipeline that finds job postings, picks the ones worth applying to, and prepares applications. Design: [`docs/README.md`](docs/README.md) (overview) and one doc per step. Progress log: [`docs/updates/`](docs/updates/README.md).
 
-**Implemented: Step 1 — Collect.** Postings from **job sites** (LinkedIn, verified) and **company career sites** (one plugin per company on the Ashby, Greenhouse, Lever and Workday platforms — verified on UiPath, NVIDIA, Adobe, Palantir) are collected, parsed into common fields, normalized, and deduplicated into **jobs**, stored in a local SQLite database. Steps 2 (select) and 3 (apply) are designed, not built.
+**Implemented: Step 1 — Collect.** Postings from **job sites** (LinkedIn, verified) and **company career sites** (one plugin per company on the Ashby, Greenhouse, Lever and Workday platforms — verified on UiPath, NVIDIA, Adobe, Palantir) are collected, parsed into common fields, normalized, and deduplicated into **jobs**, stored in a local SQLite database. **Step 2 — Select** is being built: **filters** (one folder each — a command, its settings, optional parser) can be written, checked and previewed (S1); the agent that runs them comes next (S2). Step 3 (apply) is designed, not built.
 
 ---
 
@@ -18,6 +18,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
   - [Processing](#processing) — `parse`, `normalize`, `dedup`, `jobs`, `mark`
   - [Pipeline, schedule, retention](#pipeline-schedule-retention) — `run`, `schedule`, `purge`
   - [Looking at data](#looking-at-data) — `inspect`, `export`, `import-files`
+  - [Selecting (Step 2)](#selecting-step-2) — `filters`
 - [Where the data goes](#where-the-data-goes)
 - [Safety](#safety)
 - [Adding a source plugin](#adding-a-source-plugin)
@@ -461,6 +462,37 @@ uv run auto-app import-files
 
 ---
 
+### Selecting (Step 2)
+
+A **filter** is a folder in `filters/` (git-ignored) that says how you want jobs judged — design: [`docs/step2-select.md`](docs/step2-select.md). You can have several. Start from an example:
+
+```bash
+mkdir -p filters && cp -r filters.example/ml-engineer filters/
+```
+
+| File | |
+|---|---|
+| `command.md` (required) | the prompt run for **every** job, in your own words: background, what you want, deal-breakers, when to recommend. `$ARGUMENTS` marks where the job details go (appended at the end if missing). Optional front matter: `description` only. Unless the filter has a `parser.py`, it must make the agent end with **our output convention**: `{"recommend": true \| false, "reason": "…"}` |
+| `filter.yaml` (required) | `job_details` to send (`title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`; default the first three + description), `max_description_chars`, the agent's `model`, `tools` (`web_search`, `web_fetch`), `max_turns`, `max_tool_calls`, and `applies_to` (sources or `source/search`; omit = every job) |
+| `parser.py` (optional) | `parse(answer) -> {"recommend": bool, "reason": str}` for a command with its own output format (see `filters.example/verdict-format/`) |
+| any other files | notes the command refers to (e.g. `sponsorship-notes.md`); the agent may read files in its own folder. Under 200 KB each |
+
+A filter's **version** is a hash of its command, its other files and the agent settings in `filter.yaml` (not `parser.py`, not `applies_to`); judgments will be stored per version, so editing a command marks old judgments out of date.
+
+#### `filters [NAME]`
+Lists the filters: version, model, tools, how the answer is read (output convention or `parser.py`), which jobs each judges, its description, and any problem (✗ — e.g. an `applies_to` naming no configured source or search) or warning (! — e.g. a command that doesn't mention the output convention or has no `$ARGUMENTS`). Folders that don't load are listed with the reason (file and field). With a name: that filter's settings and files; with `--job`: **exactly the text the agent would get for that job** — the command with the job details in place of `$ARGUMENTS`, inside a block marked as data from the posting (legal boilerplate removed, original casing kept, long descriptions cut and marked).
+
+| Option | |
+|---|---|
+| `--job N` | with a name: print what the agent gets for job N |
+| `--dir PATH` | another filters folder (e.g. `filters.example`) |
+
+```bash
+uv run auto-app filters
+uv run auto-app filters ml-engineer --job 28
+uv run auto-app filters --dir filters.example
+```
+
 ## Where the data goes
 
 Everything lives in `data/` in the project directory (git-ignored):
@@ -474,6 +506,7 @@ data/failures/<batch_id>/<source>/    screenshots + HTML when a site blocks or s
 data/raw/                             file-only mode — with --debug-files (or debug_files: true), instead of the database
 data/export/                          `auto-app export` output
 browser-profiles/<source>/            saved logins
+filters/<name>/                       your Step 2 filters (command.md, filter.yaml, …); examples in filters.example/
 ```
 
 ## Safety

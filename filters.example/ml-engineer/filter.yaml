@@ -1,0 +1,15 @@
+# Copy this folder to filters/<your-name>/ and edit (filters/ is git-ignored). See docs/step2-select.md §2.
+
+# ---- what the agent gets for each job (part of the version) ----
+job_details: [title, company, locations, description]
+# available: title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description
+max_description_chars: 12000          # longer descriptions are cut, and marked as cut
+
+# ---- how the agent runs (part of the version) ----
+model: claude-sonnet-5                # any Claude model; a smaller one costs less
+tools: [web_search, web_fetch]        # read-only; the agent may also read files in this folder
+max_turns: 8                          # per-job budget: the agent must answer within it
+max_tool_calls: 6
+
+# ---- which jobs it judges (not part of the version) ----
+# applies_to: [linkedin, nvidia]      # sources, or searches as `source/search`; omit = every job

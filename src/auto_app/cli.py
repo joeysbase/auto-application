@@ -488,6 +488,77 @@ def mark(
         typer.echo(f"job #{job_id}: {j['state']}  (expires {(j.get('expires_at') or '—')[:10]})  {j.get('title') or ''}")
 
 
+@app.command("filters")
+def filters_cmd(
+    name: Annotated[Optional[str], typer.Argument(help="Check one filter and show its settings")] = None,
+    job: Annotated[Optional[int], typer.Option("--job", help="With NAME: print exactly what the agent gets for this job")] = None,
+    directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """Step 2 filters (one folder each: command.md, filter.yaml, optional parser.py): list, check, preview."""
+    from auto_app.select.filters import EXAMPLES_DIR, FILTERS_DIR, check_applies_to, load_filters, render
+    from auto_app.select.job_details import build_job_details
+
+    folder = directory or FILTERS_DIR
+    fs = load_filters(folder)
+    cfg = _config(config) if (config or get_paths().config_file.exists()) else AppConfig()
+    reg = default_registry()
+
+    def problems(f):
+        return check_applies_to(f, cfg, reg)
+
+    if not name:
+        if not fs.filters and not fs.broken:
+            typer.echo(f"no filters in {_rel(str(folder))}. Start from an example:\n"
+                       f"  mkdir -p {_rel(str(FILTERS_DIR))} && cp -r {_rel(str(EXAMPLES_DIR))}/ml-engineer {_rel(str(FILTERS_DIR))}/")
+            return
+        for f in fs.filters.values():
+            reads = "parser.py" if f.parser else "output convention"
+            scope = ", ".join(f.config.applies_to) if f.config.applies_to else "every job"
+            typer.echo(f"{f.name:<20} v{f.version}  {f.config.model}  tools {f.config.tools or 'none'}  reads: {reads}  "
+                       f"judges: {scope}")
+            if f.description:
+                typer.echo(f"{'':<20} {f.description}")
+            for msg in problems(f):
+                typer.echo(f"{'':<20} ✗ {msg}")
+            for w in f.warnings:
+                typer.echo(f"{'':<20} ! {w}")
+        for broken, why in fs.broken.items():
+            typer.echo(f"{broken:<20} ✗ not loaded: {why}")
+        return
+
+    try:
+        f = fs.get(name)
+    except KeyError as e:
+        typer.echo(e.args[0], err=True)
+        raise typer.Exit(1)
+    errs = problems(f)
+    if job is None:
+        c = f.config
+        typer.echo(f"{f.name} — v{f.version}  ({_rel(str(f.path))})")
+        if f.description:
+            typer.echo(f.description)
+        typer.echo(f"  job details   {', '.join(c.job_details)}  (description cut at {c.max_description_chars} chars)")
+        typer.echo(f"  agent         {c.model}; tools {c.tools or 'none'}; at most {c.max_turns} turns, {c.max_tool_calls} tool calls")
+        typer.echo(f"  reads answer  {'parser.py' if f.parser else 'the output convention: {\"recommend\": true|false, \"reason\": …}'}")
+        typer.echo(f"  judges        {', '.join(c.applies_to) if c.applies_to else 'every job'}")
+        typer.echo(f"  other files   {', '.join(f.files) or 'none'}  (the agent may read these)")
+        for msg in errs:
+            typer.echo(f"  ✗ {msg}")
+        for w in f.warnings:
+            typer.echo(f"  ! {w}")
+        typer.echo(f"\npreview what the agent gets:  auto-app filters {f.name} --job <#>")
+        raise typer.Exit(1 if errs else 0)
+    store = _store(out, cfg)
+    _require_db(store, "`filters --job`")
+    parsed, locations = store.job_inputs(job)
+    if parsed is None:
+        typer.echo(f"job #{job}: not found, archived, or its primary posting isn't parsed", err=True)
+        raise typer.Exit(1)
+    typer.echo(render(f, build_job_details(parsed, locations, f.config.job_details, f.config.max_description_chars)))
+
+
 @app.command()
 def plan(
     site: SiteOpt = None,

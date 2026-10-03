@@ -5,7 +5,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
 | Step | Doc | Question it answers | Status |
 |---|---|---|---|
 | 1 | [step1-collect.md](step1-collect.md) | *What jobs are out there?* Collect postings from job sites and company career sites, store them, and turn them into one clean, deduplicated list of jobs | Raw collection working for LinkedIn; plugins, parse, DB, dedup designed |
-| 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | Designed |
+| 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | S1 implemented (filters); S2–S3 designed |
 | 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Tailor the CV per job and submit, with a human approving | Designed |
 
 Implementation progress, one entry per feature: [updates/](updates/README.md).
@@ -100,10 +100,11 @@ auto-application/
 │   ├── sources/                     # plugin interface + built-in plugins (linkedin, handshake, jobright)
 │   ├── collect/                     # step 1a: collection engine
 │   ├── process/                     # step 1b: parse, normalize, dedup, purge
-│   ├── select/                      # step 2: filters (command, settings, parser), agent judgment, review
+│   ├── select/                      # step 2: filters (command, settings, parser), job details; next: agent judgment, review
 │   └── apply/                       # step 3: tailor, verify, render, review, submitters
 ├── tests/                           # mirrors src/; fakesite/, fixtures/<source>/
 ├── docs/                            # these design docs
+├── filters/<name>/                 # your Step 2 filters (git-ignored); examples in filters.example/
 ├── browser-profiles/<source>/       # saved logins (git-ignored)
 └── data/                            # git-ignored
     ├── auto_app.db                  # the database (planned; today: data/raw/ files)

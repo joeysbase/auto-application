@@ -1,0 +1,5 @@
+job_details: [title, company, locations, employment_type, description]
+model: claude-haiku-4-5-20251001
+tools: []                             # no lookups: judge from the posting only
+max_turns: 2
+max_tool_calls: 0

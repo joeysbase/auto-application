@@ -11,3 +11,6 @@ out/
 config/searches.yaml
 browser-profiles/
 data/
+
+# Step 2 filters (your commands, settings, notes); examples are in filters.example/
+filters/

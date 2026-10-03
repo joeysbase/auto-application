@@ -427,6 +427,17 @@ class DbStore:
     def job(self, job_id: int) -> dict | None:
         return next((j for j in self.jobs(archived=None) if j["job_id"] == job_id), None)
 
+    def job_inputs(self, job_id: int) -> tuple[dict | None, list[str]]:
+        """What Step 2 sends about a job: its primary posting's parsed fields and the job's merged locations."""
+        j, p = T.jobs, T.postings
+        with self.engine.connect() as conn:
+            parsed = conn.execute(select(p.c.parsed).join(j, j.c.primary_posting_id == p.c.posting_id)
+                                  .where(j.c.job_id == job_id)).scalar()
+            locs = [x for (x,) in conn.execute(select(T.job_locations.c.location_norm)
+                                               .where(T.job_locations.c.job_id == job_id)
+                                               .order_by(T.job_locations.c.location_norm))]
+        return parsed, locs
+
     def archived_description(self, job_id: int) -> str:
         with self.engine.connect() as conn:
             return unz(conn.execute(select(T.jobs.c.archive_description).where(T.jobs.c.job_id == job_id)).scalar())
