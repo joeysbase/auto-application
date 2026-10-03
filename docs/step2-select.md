@@ -1,152 +1,294 @@
 # Step 2 — Select
 
-**Goal:** from the pool of collected jobs, recommend the ones worth applying to — the way you would by reading each description against your CV and preferences — as **a list for you to decide on**, keeping the reasons so the recommendations can be checked and tuned.
+**Goal:** from the pool of collected jobs, recommend the ones worth applying to, as **a list for you to decide on** — judged the way **you** describe it, and learning from your decisions.
 
 ```
-pool (step2 = —) ─► A. hard filters ─► B. LLM fit scoring ─► recommended | un_recommended ─► you decide on recommended jobs
-                     (free, rules)      (CV + preferences)      (scores + reasons kept)       (apply → Step 3, or not_applied)
+filters/<name>/  (one folder = one filter; you can have several)
+  command.md  filter.yaml  [parser.py]  [other files]          preference model (one per filter)
+          │                                                              │
+jobs ─────┴─► agent runs the command on the job ─► answer ─► parser ─► recommend? ──┐
+                                                                                     OR ─► the filter recommends?
+                                         preference model (later; design open) ─► recommend? ──┘
+                                                                                          │
+                                       job recommended  =  any filter that judged it recommends ─► you: apply / no
+                                                                                                        │
+                                                                     your decisions train each filter's preference model
 ```
 
-Status: 📐 designed. Depends on Step 1 parse + dedup (jobs with clean fields and descriptions).
+Status: 📐 designed (simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design). Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
 
 ---
 
-## 1. Inputs
+## 1. Principles
 
-| Input | Where | Notes |
-|---|---|---|
-| Jobs | `jobs` + parsed fields of the primary posting, all `job_locations` | active, not yet evaluated (`step2` empty); warnings from Step 1 ("looks like archived job #N you applied to") are passed to the scorer and shown in review |
-| Master CV | `profile/master_cv.yaml` (git-ignored) | shared with Step 3; see step3-apply.md §2 |
-| Preferences | `config/preferences.yaml` (git-ignored; example committed) | below |
+1. **No rule stage.** Step 1's searches already apply what the sites can filter (location, job type, experience, date …). Everything else is judged by the agent from the job text — and, where your command asks for it, from what it looks up.
+2. **A filter is a folder you write.** Its **command** (`command.md`) says, in your own words, how to judge and when to recommend, and is run for **every** job. Its `filter.yaml` says which job details to send and how the agent runs. Any other files in the folder come with it (reference notes, an optional parser). Everything in the folder identifies the filter's version.
+3. **The app doesn't define how to judge.** No built-in scores, thresholds or deal-breaker rules. It only needs to know, from each answer, **recommend or not** and **why** — read through our output convention, or your own parser.
+4. **Two judges per filter, OR-ed:** the agent running the command, and the filter's own **preference model**, trained on your decisions. The agent never sees the preference model's output.
+5. **High recall.** Step 2 should rarely drop a job you might want: every job you review becomes a training label, and each preference model needs many and varied ones — rejects included. When unsure, recommend; when an answer can't be read, show it to you.
+6. **You decide.** Step 2 only sets `step2` (`recommended` / `un_recommended`); `decision` is yours.
+7. **An agent, so a command can use information beyond the posting** (§6) — bounded by read-only tools, a per-job budget, and no access to LinkedIn.
+
+---
+
+## 2. A filter — `filters/<name>/` (git-ignored)
+
+```
+filters/
+  ml-engineer/
+    command.md              # required: the prompt run for every job
+    filter.yaml             # required: job details, agent settings, applies_to
+    parser.py               # optional: your own way to read the answer (§3.2)
+    sponsorship-notes.md    # optional: any other files the command refers to
+  research-scientist/
+    command.md
+    filter.yaml
+```
+
+The folder name is the filter's name. `auto-app filters` lists them; an example filter is committed under `filters.example/`.
+
+### 2.1 `command.md` — run for every job
+
+In the style of Claude Code's custom slash commands: a markdown file, optional front matter (`description`), and the prompt as the body. **`$ARGUMENTS`** marks where the job details go (if it's missing, they're appended at the end). Unless the filter has a `parser.py`, the command must make the agent end with **our output convention** (§3.1).
+
+```markdown
+---
+description: Screen ML engineer / applied scientist jobs for me.
+---
+Decide whether I should consider applying to this job. If unsure, recommend.
+
+## My background
+Python, PyTorch, CUDA basics, distributed training (DDP, FSDP), LLM fine-tuning (LoRA), MLOps (Docker, k8s).
+M.S. CS, 2 ML internships (inference latency, recommendation models).
+
+## What I want
+Entry-level ML engineer / applied scientist; applied ML or ML systems over pure research; production work.
+US, any city; remote or hybrid preferred.
+
+## Deal-breakers
+- No visa sponsorship (I need H-1B sponsorship). If the posting doesn't say, check whether the company has
+  sponsored before (see sponsorship-notes.md for how).
+- Security clearance or US citizenship required
+- More than 3 years of experience required
+- Pure data-analyst / BI roles
+
+## The job
+$ARGUMENTS
+
+## Answer
+End your answer with a JSON object on its own, and nothing after it:
+{"recommend": true | false, "reason": "…"}
+```
+
+### 2.2 `filter.yaml`
 
 ```yaml
-# config/preferences.yaml
-target_roles: ["machine learning engineer", "applied scientist", "ML infrastructure"]
-seniority: { accept: [entry, new_grad, associate], max_years_required: 2 }
-locations:
-  accept: ["remote-us", "new york, ny", "boston, ma", "san francisco bay area", "seattle, wa"]
-  relocate: true
-work_authorization: { needs_sponsorship: true, citizenship_required_ok: false }
-employment_types: [full_time]
-salary: { min_base_usd: 100000, unknown_ok: true }
-reposted: skip                     # skip | penalize | keep — how to treat jobs the site marks as reposted
-exclude:
-  companies: ["SomeAgency"]
-  industries: ["defense"]          # example
-  keywords: ["security clearance", "TS/SCI"]
-priorities: >                      # free text given to the scorer
-  Prefer ML systems / applied ML over pure research; value mentorship and
-  production work; avoid pure data-analyst roles.
+# ---- what the agent gets for each job (part of the version) ----
+job_details: [title, company, locations, description]      # default shown
+max_description_chars: 12000                               # longer descriptions are cut, and marked as cut
+
+# ---- how the agent runs (part of the version) ----
+model: claude-sonnet-5                         # any Claude model; a smaller one costs less
+tools: [web_search, web_fetch]                 # read-only; it may also read files in this filter's folder
+max_turns: 8                                   # per-job budget: the agent must answer within it
+max_tool_calls: 6
+
+# ---- which jobs it judges (not part of the version) ----
+applies_to: [linkedin, nvidia]                 # sources, or searches as `source/search`; omit = every job
 ```
+
+- **Job details** available: `title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`. Values come from the job's primary posting (parsed fields) and its merged `job_locations`; the description is the parsed text with legal boilerplate removed (EEO, accommodations, `#LI-` tags), original casing kept, cut at `max_description_chars`. In the command they appear as labelled lines (`Title: …`, `Company: …`, `Description: …`), marked as **data from the posting**.
+- **Default:** the command + title + description are the core; **company** and **location** are one short line each and often decisive (location is usually in the page header, not the text; the company bears on sponsorship and type of work).
+- **Validated when the filter loads** (an error names the file and field): `command.md` exists; job details, tools and `applies_to` names are known; `parser.py` defines `parse`; without a `parser.py`, the command should mention the convention (a warning if it doesn't).
+
+### 2.3 Versions
+
+- A filter's **version** = a hash of everything that shapes the agent's answer except the job itself: `command.md`, the other files in the folder, and `filter.yaml`'s `job_details`, `max_description_chars`, `model`, `tools`, `max_turns`, `max_tool_calls`.
+- **Not** in the version: `parser.py` (it only reads stored answers — §3.3) and `applies_to` (it only decides which jobs the filter judges).
+- Judgments are stored per **(job, filter version)**. Editing the command or another file makes a new version; older judgments are marked out of date and redone on `select --rescore` — never silently.
+
+### 2.4 Several filters
+
+- **Which filters judge a job:** those whose `applies_to` covers a source or search that found it (Step 1 records which searches saw each posting); a filter without `applies_to` judges every job.
+- **A job is recommended if any filter that judged it recommends it**; `un_recommended` only when all of them said no. Each filter's judgment is kept; review shows which filter(s) recommended it and why.
+- Cost grows with filters × jobs — `applies_to` keeps it down.
 
 ---
 
-## 2. Stage A — Hard filters (rules, no LLM)
+## 3. Reading the answer
 
-Cheap, explainable rules that remove obvious mismatches. Each failed rule is recorded as a reason.
+Each answer goes through: **raw answer → parser → parsed output.**
 
-| Rule | Checks |
+**The parsed output** — the contract between any parser and the rest of Step 2:
+```python
+class ParsedOutput(BaseModel):
+    recommend: bool | None    # the decision itself; None = the answer couldn't be read
+    reason: str = ""          # what you see in review, in whatever form your command asks for
+```
+Nothing else: scores, matched skills, deal-breakers or links your command asks for belong in `reason` (the full answer and the agent's trace, with every page it looked at, are kept too).
+
+### 3.1 Our output convention (default)
+
+Every command without a `parser.py` makes the agent end its answer with:
+
+```
+{"recommend": true | false, "reason": "…"}
+```
+— a JSON object on its own, with nothing after it. The built-in parser takes the **last** JSON object in the answer; `recommend` must be `true` or `false`; `reason` is optional (missing → empty). Anything else can come before it. We suggest commands also say "if unsure, recommend" (high recall), as in the example.
+
+### 3.2 Your own parser — `parser.py` (optional)
+
+For a command with its own output format (e.g. `Verdict: apply | maybe | skip` and `Reason: …`):
+
+```python
+# filters/research-scientist/parser.py
+def parse(answer: str) -> dict:
+    """Return {"recommend": bool, "reason": str}; raise ValueError if the answer can't be read."""
+```
+- It runs in the app, on the stored answer; anything it can't read → raise, and the result is "couldn't read".
+- Try it on stored answers before switching: `select --reparse --filter NAME --dry-run`.
+
+### 3.3 Answers are kept raw
+
+- **Stored per (job, filter version):** the agent's **raw final answer**, the parsed output with the parser that produced it (built-in or `parser.py`, by hash), the model, the full **trace** (every tool call and a summary of its result), token and tool counts, cost.
+- **Changing or adding a `parser.py` re-reads the stored answers** (`select --reparse`) — no new agent runs, no cost.
+- A run that fails is recorded and retried; an answer that can't be read gets `recommend = None` (fix the command or parser, then `--reparse` or `--rescore`). Neither is ever counted as "no".
+
+---
+
+## 4. Agent run
+
+One agent run per job per applicable filter, started with the filter's `command.md`, the job details in place of `$ARGUMENTS`.
+
+**Runner: our own small loop on the Claude API** (Messages API with tool use) — chosen 2026-10-02 over the Claude Agent SDK. The agent here is deliberately narrow, so a minimal loop with exactly the tools it needs is safer and more predictable than a general-purpose coding agent with most of it switched off:
+
+| Tool | What it is |
 |---|---|
-| Location | at least one of the job's `job_locations` (or remote scope) is acceptable |
-| Employment type | in `employment_types` |
-| Seniority / years | title words; regex on description for "N+ years" > `max_years_required` |
-| Sponsorship / citizenship | phrases like "unable to sponsor", "must be a U.S. citizen", "clearance" vs. `work_authorization` |
-| Salary | stated max below `min_base_usd` (unknown passes if `unknown_ok`) |
-| Exclusions | companies, industries, keywords |
-| Age | posted older than N days (stale) |
-| Reposted | `reposted: skip` → drop jobs marked reposted (reason "reposted"); `penalize` → pass them on, and Stage B is told the job is a repost and when it was first seen; `keep` → no effect |
+| `web_search`, `web_fetch` | the API's server-side tools, with **linkedin.com blocked by domain** |
+| `read_file` | ours: reads a file in the filter's own folder only (path checked; no other files) |
 
-**Why reposts are handled here, not in Step 1:** LinkedIn only shows "Reposted" on the job page, not on the card, so skipping at collection would save few page opens (~5% of jobs) while losing the posting that dedup needs to link a repost to a job you've already seen. Whether a repost is worth applying to is a preference, so it lives in `preferences.yaml` and can be changed and re-run without re-collecting.
+The loop: send the command + job → the model calls tools → results go back → repeat until it answers, or `max_turns` / `max_tool_calls` is reached (then it's told to answer with what it has). The app counts tokens and cost per run, records the trace, retries transient API errors, and stops a `select` run at `--max-cost`. Tested offline with a fake model (as Step 1 tests collection against a fake site). If filters ever need much more (running scripts, many tools), the runner can be swapped for the Agent SDK without changing filters, parsing or storage.
 
-Rules are conservative: when text is ambiguous ("sponsorship may be available"), the job passes to Stage B, which reads it in context.
+
+
+- **May use:** the filter's `tools` (read-only web search / fetch) and read access to the files in its own folder, within `max_turns` / `max_tool_calls`; when the budget runs out it must answer with what it has.
+- **May not:** visit LinkedIn (blocked by domain — the collector is the only component allowed there, with its pacing and limits), write files, run code, read outside its folder, or use any credential. It runs without your logins, browser profiles or other API keys.
+- Job details and fetched pages are **data, never instructions** (a posting or page can contain text written to manipulate an agent).
+- Runs for different jobs go in parallel, a few at a time (`--parallel`), under an overall budget (`select --max-cost`).
 
 ---
 
-## 3. Stage B — LLM fit scoring
+## 5. Recommending
 
-One call per job, structured output.
-
-**Prompt layout** (for prompt caching — the prefix is identical for every job):
-1. *System + rubric* — how to score, what counts as a red flag, output schema.
-2. *CV* — rendered from `master_cv.yaml`.
-3. *Preferences* — the YAML above, including `priorities`.
-4. *Job* — title, company, locations, workplace/employment type, salary, repost status (with first-seen date), and the description.
-
-**Output schema:**
-```json
-{
-  "fit_score": 0-100,
-  "recommendation": "apply | maybe | skip",
-  "matched_requirements": ["…"],
-  "missing_requirements": ["…"],
-  "years_required": 0,
-  "seniority_fit": "under | fit | over",
-  "sponsorship": "ok | unclear | blocked",
-  "red_flags": ["…"],
-  "summary": "one sentence a human can act on"
-}
+Per filter that judged the job:
 ```
-
-**Model choice:** a small, fast model (Claude Haiku 4.5) for every job; optionally re-score borderline jobs (`maybe`, or score within ±10 of the threshold) with a stronger model (Claude Sonnet 5). The model id and a `prompt_version` are stored with every score.
-
-**Result:** `apply` or score ≥ threshold (start at 70) → `step2 = recommended`; `skip` or score < threshold − 20 → `un_recommended`; otherwise `recommended` with a `maybe` flag. Jobs failing Stage A's hard filters are `un_recommended` with the failed rule as the reason. Step 2 never sets `decision` — that's yours.
-
-**Re-scoring:** changing the CV, preferences, or rubric bumps `prompt_version`; `auto-app select --rescore` re-evaluates active jobs **without a decision** (recommended-undecided and un_recommended). Jobs you decided on (`applied`, `not_applied`) and archived jobs are never touched.
-
----
-
-## 4. Review and calibration
-
-- `auto-app review` lists **recommended, undecided** jobs (score, summary, matched/missing, red flags, warnings, link, "expires in N days") and lets you mark each **apply** (→ Step 3 creates an application; the job's `decision` becomes `applied` when it's submitted) or **no** (`decision = not_applied`). Undecided jobs stay in the list until you decide or they're archived by the job TTL (30 days unseen).
-- `auto-app jobs --un-recommended` shows what Step 2 left out and why; you can **promote** one to `recommended` (recorded as a disagreement for calibration). un_recommended jobs are deleted by the job TTL after 7 days unseen.
-- **Calibration period (first ~2 weeks):** also review a sample of `un_recommended` jobs. Disagreements are recorded (`job_reviews`) and used to adjust rules, `priorities`, and the threshold.
-- A weekly summary: counts per stage, top rejection reasons, agreement rate with your reviews.
+the filter recommends  =  its agent's parsed output says recommend
+                       OR its answer couldn't be read (recommend = None)   ← high recall: you see it
+                       OR its preference model says recommend             (once it exists — §7)
+```
+```
+job recommended  =  any filter that judged it recommends
+otherwise        →  un_recommended
+```
+- A job whose agent run failed (not just unreadable) waits for the retry and isn't decided yet.
+- Review lists recommended jobs newest first (no app-defined ranking), with each filter's reason; jobs there only because an answer couldn't be read are marked so.
+- Jobs keep their Step 1 warnings (e.g. "looks like job #12, which you applied to"), shown in review.
+- un_recommended jobs follow C11's TTL (deleted after 7 days unseen) — keep that in mind while a command is new; `jobs --state un_recommended` lets you check them, and `mark` can promote one.
 
 ---
 
-## 5. Storage
+## 6. Agent rather than a single LLM call
+
+Chosen so that a command can use information the posting doesn't contain (a company's sponsorship history, its engineering blog, recent news).
+
+| | Single LLM call | Agent (chosen) |
+|---|---|---|
+| Information | only the command + job details | can look things up when the command asks |
+| Cost / speed | one call, seconds | several calls per job; bounded by `max_turns` / `max_tool_calls` and `--max-cost` |
+| Consistency | same input → near-same answer | may look up different things for similar jobs → the trace is stored, and `why` shows it |
+| Risk | none beyond the call | browsing and untrusted text → read-only tools, no LinkedIn, no credentials, job text and fetched pages treated as data |
+
+To cut cost later, a filter could run a cheap first pass (a single call, no tools) and send only promising or uncertain jobs to the agent — the same command works for both.
+
+---
+
+## 7. Preference model — one per filter (design open)
+
+Fixed so far:
+- **One per filter**, learning that filter's taste. Its labels are **your** decisions on jobs that filter judged (a job judged by two filters gives a label to both) — never the agent's output.
+- Tied to the filter's **name**, not its version, so it keeps learning across command edits.
+- It judges jobs independently of the agent; its yes/no is OR-ed with the agent's (§5).
+- Its trained state lives in `data/` (with the rest of the app's data), not in the filter folder.
+- Your review decisions are stored from the start (§8), so it will have data when it's built.
+
+Open: its inputs, model type, when it's trusted enough to recommend, and how it avoids learning only from jobs that were already recommended.
+
+---
+
+## 8. Review
+
+`auto-app review` walks through **recommended, undecided** jobs:
+
+- shows: title, company, locations, the filter(s) that recommended it and their reasons, warnings, expires in N days, link;
+- you answer **apply** (→ Step 3 creates an application; `decision` becomes `applied` on submission) or **no** (`decision = not_applied`), optionally with a short reason — kept as training labels for the filters that judged the job, and for improving commands.
+
+Also: `auto-app why <job>` (each filter's version, the agent's full answer, the parsed output, and the trace with every page it looked at).
+
+---
+
+## 9. Storage
 
 ```sql
-job_scores  (job_id FK, stage,           -- 'rules' | 'llm'
-             model, prompt_version, result_json, fit_score, recommendation, created_at,
-             PK(job_id, stage, prompt_version))
-job_reviews (job_id FK, reviewer_decision, model_decision, note, created_at)
+filter_versions (filter_version PK, filter, files JSON, settings JSON, created_at)   -- exact command + files run
+judgments       (job_id FK, filter, filter_version, model, answer TEXT,               -- the raw final answer
+                 recommend BOOLEAN, reason TEXT, parser TEXT, parse_error TEXT,       -- parsed output; NULL = couldn't read
+                 trace BLOB(zstd), tokens, tool_calls, cost_usd, status, created_at, parsed_at,
+                 PRIMARY KEY (job_id, filter_version))
+reviews         (job_id FK, decision, reason, filters JSON, job_text TEXT, created_at)  -- your decisions = labels
+-- later: preference model state per filter (data/), its scores per job
 ```
-Step 2 sets `jobs.step2` (`recommended` | `un_recommended`) and `step2_at`; your review sets `jobs.decision = not_applied` (Step 3 sets `applied`). Job state and TTL: [overview §3](README.md#3-job-state).
+Step 2 sets `jobs.step2` / `step2_at`; review sets `jobs.decision` / `decided_at` (Step 3 sets `applied` on submission). Archived jobs (C11) keep their Step 2 verdict in the archive record; `reviews` rows (with the job's title and description text) are kept after the job is archived or deleted, so labels outlive the TTL.
 
 ---
 
-## 6. CLI
+## 10. CLI
 
 ```
-auto-app select [--limit N] [--rescore] [--model MODEL]
-auto-app review [--include-filtered SAMPLE]
-auto-app why <job_id>            # show rules + LLM result for a job
+auto-app filters [NAME]                                   # list filters (version, description, applies_to, judged / out-of-date counts); check one
+auto-app select [--filter NAME]… [--limit N] [--rescore] [--max-cost USD] [--parallel N]   # judge active jobs not yet judged by the current versions
+auto-app select --reparse [--filter NAME] [--dry-run]     # re-read stored answers with the current parser (no agent runs)
+auto-app review [--filter NAME]                           # decide on recommended jobs
+auto-app why <job_id>                                     # each filter's answer, parsed output, trace and version
 ```
+Until these exist, `auto-app mark` (C11) sets states by hand.
 
 ---
 
-## 7. Milestones
+## 11. Milestones
 
 | # | Deliverable |
 |---|---|
-| S1 | `preferences.yaml` + master CV loader (shared with Step 3) |
-| S2 | Stage A rules with reasons; tests on real parsed postings |
-| S3 | Stage B scorer (structured output, prompt caching, stored results) — first tried on ~30 saved LinkedIn jobs |
-| S4 | `review` + `why`; calibration log |
-| S5 | Borderline re-scoring with a stronger model; weekly summary |
+| S1 | Filters: folder loader + validation (`command.md`, `filter.yaml`, optional `parser.py`, other files), versions, job-details builder (labelled lines, boilerplate stripped, length cap), `$ARGUMENTS` substitution; `filters` command; `filters.example/` committed |
+| S2 | Agent judgment: agent runner — our loop on the Claude API (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
+| S3 | `review` → `reviews` (labels per filter) |
+| — | Preference model per filter: design open (§7) |
 
-## 8. Risks
+## 12. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Over-aggressive filtering hides good jobs | conservative rules; calibration sampling of `un_recommended`; reasons stored; promote from `jobs --un-recommended` |
-| LLM inconsistency | structured output, fixed rubric, stored `prompt_version`, borderline re-scoring |
-| Cost growth | cached prefix, small model by default, only unscored jobs, hard filters first |
-| Sponsorship language is subtle | Stage B reads it in context; `unclear` goes to review, not auto-reject |
+| The agent rejects good jobs, and C11 deletes them after 7 days | high recall: "if unsure, recommend" in commands; unreadable answers go to review; check `jobs --state un_recommended` early on; consider a longer `ttl_days.un_recommended` while a command is new |
+| An edit silently changes results | every change to the folder (except `parser.py`, `applies_to`) is a new version; old judgments marked out of date, redone only on `--rescore` |
+| A command doesn't follow the convention | `filters` warns when loading; unreadable answers → review, never "no"; fix and `--reparse` at no cost |
+| Cost runs away | per-job `max_turns` / `max_tool_calls`, `select --max-cost`, cost stored per judgment; `applies_to`; optional cheap first pass (§6) |
+| A posting or web page manipulates the agent (prompt injection) | job text and fetched pages are data, not instructions; read-only tools; no code execution, credentials, file writes or LinkedIn; the answer only feeds a yes/no |
+| The agent visits LinkedIn and risks your account | LinkedIn blocked by domain; the agent only sees the job text the collector saved |
+| `parser.py` is code from the filter folder | it's your own file, run by the app like a plugin; it only receives the answer text |
+| Inconsistent judgments | trace stored; `why` shows what it looked up |
 
-## 9. Open questions
+## 13. Open questions
 
-1. LLM provider and budget (default: Claude API).
-2. Starting threshold and whether `maybe` jobs go to Step 3 automatically.
-3. Preferences you want encoded beyond the example (company size, industry, team type).
+1. The preference model (§7).
+2. Should `applies_to` also accept company names (e.g. a filter only for NVIDIA jobs from LinkedIn)?
+3. A longer un_recommended TTL by default while a command is new?
+4. Shared text between filters (e.g. one sponsorship section used by several commands): an include syntax, or copy for now?

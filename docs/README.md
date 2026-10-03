@@ -5,7 +5,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
 | Step | Doc | Question it answers | Status |
 |---|---|---|---|
 | 1 | [step1-collect.md](step1-collect.md) | *What jobs are out there?* Collect postings from job sites and company career sites, store them, and turn them into one clean, deduplicated list of jobs | Raw collection working for LinkedIn; plugins, parse, DB, dedup designed |
-| 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Score each job against the CV and preferences | Designed |
+| 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | Designed |
 | 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Tailor the CV per job and submit, with a human approving | Designed |
 
 Implementation progress, one entry per feature: [updates/](updates/README.md).
@@ -17,9 +17,9 @@ Implementation progress, one entry per feature: [updates/](updates/README.md).
 ```
                     STEP 1 — COLLECT                                   STEP 2 — SELECT        STEP 3 — APPLY
 ┌────────────────────────────────────────────────────────────┐   ┌──────────────────┐   ┌─────────────────────┐
-│ sources (plugins)                                           │   │ hard filters     │   │ tailor CV (+ letter)│
-│  LinkedIn · company career sites · ATS platforms (API)      │   │ LLM fit score    │   │ verify no fabricat. │
-│        │                                                    │   │ reasons kept     │   │ review queue (you)  │
+│ sources (plugins)                                           │   │ agent + command  │   │ tailor CV (+ letter)│
+│  LinkedIn · company career sites · ATS platforms (API)      │   │ preference model │   │ verify no fabricat. │
+│        │                                                    │   │ you decide       │   │ review queue (you)  │
 │        ▼                                                    │   │                  │   │ submit per platform │
 │ collect raw ─► parse ─► normalize ─► dedup (L1a/L1b/L2) ─► jobs ─► shortlist ────────► applied            │
 └────────────────────────────────────────────────────────────┘   └──────────────────┘   └─────────────────────┘
@@ -100,7 +100,7 @@ auto-application/
 │   ├── sources/                     # plugin interface + built-in plugins (linkedin, handshake, jobright)
 │   ├── collect/                     # step 1a: collection engine
 │   ├── process/                     # step 1b: parse, normalize, dedup, purge
-│   ├── select/                      # step 2: hard filters, scorer, prompts
+│   ├── select/                      # step 2: filters (command, settings, parser), agent judgment, review
 │   └── apply/                       # step 3: tailor, verify, render, review, submitters
 ├── tests/                           # mirrors src/; fakesite/, fixtures/<source>/
 ├── docs/                            # these design docs

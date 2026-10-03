@@ -9,6 +9,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-01 | Design: Step 2 simplified — filters (folder: command + settings + optional parser) — an agent runs the command on each job; OR-ed with a preference model later | 2 | 📐 designed | [2026-10-01-step2-redesign](2026-10-01-step2-redesign.md) |
 | 2026-10-01 | C11: job state (`step2` + `decision`), job TTL (delete / archive), archived records, repost warnings, `mark`; atomic migrations | 1 | ✅ done | [2026-10-01-c11-job-state-ttl](2026-10-01-c11-job-state-ttl.md) |
 | 2026-10-01 | Readable `auto-app jobs` (newest first, display names, places, sources; `--source`, `--company`, `--limit`) | 1 | ✅ done | [2026-10-01-readable-jobs](2026-10-01-readable-jobs.md) |
 | 2026-10-01 | LinkedIn: real filters on the newer search page (`f_SAL` segments, `f_AL`/`f_EA`/`f_JIYN`), LinkedIn `site_filters`, stop at "related" results | 1 | ✅ done | [2026-10-01-linkedin-real-filters](2026-10-01-linkedin-real-filters.md) |
@@ -41,7 +42,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 | Feature | Step | Design |
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
-| Step 2: select (hard filters, LLM scoring) | 2 | [step2](../step2-select.md) |
+| Step 2: select — S1 filters, S2 agent judgment, S3 review (preference model later) | 2 | [step2](../step2-select.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).
 

@@ -94,16 +94,16 @@ debug_files: false              # true = write files under data/raw/ instead of 
 
 - **Inheritance:** a field left out comes from the search named in `from` (if any), else from `defaults`. `from` copies only the generic fields (keywords, locations, dates, types, levels, pages, card filters) — never `site_url` or `site_filters`. Setting a field overrides the copy; an empty list (`experience_levels: []`) clears it.
 - **Empty vs. all:** no `keywords` means no keyword filter (every job matching the other filters), while no `posted_within_days` means the default, not "no limit" — write `posted_within_days: all` for that. On LinkedIn, `all` drops the "date posted" filter; on company boards, every listed job passes the date check.
-- **Checked against the plugin:** a field the source can't apply is an error when written in the search itself (remove it — Step 2 applies your preferences anyway) and a notice when copied with `from`; unknown `site_filters` are errors.
+- **Checked against the plugin:** a field the source can't apply is an error when written in the search itself (remove it — and state it in your Step 2 command if it matters) and a notice when copied with `from`; unknown `site_filters` are errors.
 - **LinkedIn searches** run on LinkedIn's newer search page (the one the search bar on linkedin.com/jobs opens), using its **own filters**, never extra keywords:
   - generic fields map onto them when LinkedIn has an exact equivalent: `employment_types` (full_time, part_time, contract, internship), `experience_levels` (entry, director, executive), `workplace_types: [remote]`, `posted_within_days` (rounded up to LinkedIn's 24 hours / week / month), `locations: ["United States"]`;
-  - anything else (associate, mid_senior, temporary, hybrid, on-site …) is **left to Step 2 with a notice in `plan`** — the whole field, so LinkedIn never filters out values you asked for;
+  - anything else (associate, mid_senior, temporary, hybrid, on-site …) is **not filtered, with a notice in `plan`** — the whole field, so LinkedIn never filters out values you asked for; state it in your Step 2 command if it matters;
   - `site_filters` sets LinkedIn's filter buttons directly and replaces the generic mapping: `employment_type` (full_time | part_time | contract | internship | volunteer), `experience_level` (LinkedIn's own levels: entry_level | senior | manager | director | executive), `remote`, `easy_apply`, `under_10_applicants`, `in_my_network`, `geo_id` (a location id copied from LinkedIn's URL — needed for places other than the United States);
   - after the exact matches LinkedIn lists "related" jobs that ignore the filters ("…may not be exact matches"); the tool stops reading at that note. Results are ordered by relevance, so there's no early stop: `max_pages` sets the depth.
 - **`site_url`** (browser sources) replaces the generated search with a URL copied from your browser; its own filters then apply, not the search's generic fields. For LinkedIn, both the newer `/jobs/search-results/` page and the classic `/jobs/search/` page work (the classic one honours strict filter parameters like `f_E=2` and `sortBy=DD`).
 - **Older layouts** (`job_sites:` + `companies:`) still load; a company without a plugin file gets an error with the `add-company` command that creates it.
 
-`auto-app plan` shows what this config will run and where each field is applied (by the site, locally, or deferred to Step 2); `auto-app plugins <source>` lists what a source supports.
+`auto-app plan` shows what this config will run and where each field is applied (by the site, locally, or not at all — deferred); `auto-app plugins <source>` lists what a source supports.
 
 ## Common workflows
 
@@ -214,7 +214,7 @@ uv run auto-app add-company https://adobe.wd5.myworkdayjobs.com/external_experie
 Marketing careers pages that load jobs with JavaScript (e.g. careers.adobe.com) can't be detected — open any job's *Apply* page and pass that URL.
 
 #### `plan`
-Shows what `collect` would run: every source, its searches, and for each search field whether it is applied **natively** (by the site), **locally** (on what the site returns) or **deferred** to Step 2; warns about fields a source can't apply. Config errors (unknown fields or sources, bad `site_filters`, bad `from`, a selected source with no searches) are reported here.
+Shows what `collect` would run: every source, its searches, and for each search field whether it is applied **natively** (by the site), **locally** (on what the site returns) or **deferred** (not filtered — state it in your Step 2 command if it matters); warns about fields a source can't apply. Config errors (unknown fields or sources, bad `site_filters`, bad `from`, a selected source with no searches) are reported here.
 
 | Option | |
 |---|---|

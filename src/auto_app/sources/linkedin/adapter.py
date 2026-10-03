@@ -90,9 +90,9 @@ class LinkedInAdapter(SourceAdapter):
         "keywords": Native("keywords", note="matched by meaning (broad), not exact words"),
         "locations": Native("geoId", note="United States built in; other places: site_filters.geo_id"),
         "posted_within_days": Native("f_TPR", note="rounded up to 24 hours / week / month"),
-        "workplace_types": Native("f_SAL Remote", note="only [remote] can be filtered; other combinations → Step 2"),
+        "workplace_types": Native("f_SAL Remote", note="only [remote] can be filtered; other combinations not filtered"),
         "employment_types": Native("f_SAL employment type", note="full_time, part_time, contract, internship"),
-        "experience_levels": Native("f_SAL experience level", note="entry, director, executive; others → Step 2"),
+        "experience_levels": Native("f_SAL experience level", note="entry, director, executive; others not filtered"),
     }
     SiteFilters = LinkedInFilters
     sorted_by_date = False  # relevance order only → no early stop; max_pages limits depth
@@ -145,13 +145,13 @@ class LinkedInAdapter(SourceAdapter):
                               f"copy `geoId=` from the URL into `site_filters: {{geo_id: \"…\"}}` (one search per place)")
         if search.employment_types and not (sf and sf.employment_type) and self._employment(search) is None:
             notes.append(f"employment_types {search.employment_types}: LinkedIn has no filter for "
-                         f"{[e for e in search.employment_types if e not in EMPLOYMENT_IDS]} → the field is applied in Step 2")
+                         f"{[e for e in search.employment_types if e not in EMPLOYMENT_IDS]} → not filtered (state it in your Step 2 command if it matters)")
         if search.experience_levels and not (sf and sf.experience_level) and self._experience(search) is None:
             notes.append(f"experience_levels {search.experience_levels}: LinkedIn's levels are entry-level, senior, manager, "
-                         f"director, executive → the field is applied in Step 2 (or set site_filters.experience_level)")
+                         f"director, executive → not filtered (set site_filters.experience_level, or state it in your Step 2 command)")
         places = set(search.workplace_types)
         if places and places != {"remote"} and places != {"remote", "hybrid", "onsite"}:
-            notes.append(f"workplace_types {search.workplace_types}: LinkedIn only filters Remote → applied in Step 2")
+            notes.append(f"workplace_types {search.workplace_types}: LinkedIn only filters Remote → not filtered (state it in your Step 2 command if it matters)")
         days = search.posted_within_days
         if days and days not in DATE_WINDOWS:
             window = next((w for w in DATE_WINDOWS if w >= days), None)

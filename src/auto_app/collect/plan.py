@@ -173,10 +173,10 @@ def build_tasks(cfg: AppConfig, registry: Registry, sel: Selection | None = None
             explicit = _explicit_fields(s)
             for f in rs.deferred:
                 if f in explicit:
-                    errors.append(f"{where}: `{f}` is not supported by {name} (remove it; Step 2 applies your "
-                                  f"preferences anyway — `auto-app plugins {name}` lists what it supports)")
+                    errors.append(f"{where}: `{f}` is not supported by {name} (remove it, and state it in your Step 2 command "
+                                  f"if it matters — `auto-app plugins {name}` lists what it supports)")
                 else:
-                    task.warnings.append(f"{s.search_name}: {f} (copied from {s.from_}) not supported by {name} → applied in Step 2")
+                    task.warnings.append(f"{s.search_name}: {f} (copied from {s.from_}) not supported by {name} → not filtered (state it in your Step 2 command if it matters)")
             check = getattr(plugin, "check_search", None)
             if check:  # plugin-specific limits of its filters
                 errs, notes = check(rs)
@@ -185,7 +185,7 @@ def build_tasks(cfg: AppConfig, registry: Registry, sel: Selection | None = None
             for f in rs.levels:
                 bad = unmapped_values(plugin.filters.get(f), getattr(rs, f))
                 if bad:
-                    task.warnings.append(f"{s.search_name}: {name} has no {f} value for {bad}; those are applied in Step 2")
+                    task.warnings.append(f"{s.search_name}: {name} has no {f} value for {bad}; not filtered (state it in your Step 2 command if it matters)")
             task.searches.append(rs)
         if task.searches:
             tasks.append(task)

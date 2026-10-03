@@ -194,7 +194,7 @@ Each plugin declares, per generic search field, **where** it can be applied:
 |---|---|---|
 | **Native** | the site applies it (URL or API parameter) | LinkedIn `f_E=2` for entry level |
 | **Local** | the engine applies it to what the site returns — card text (browser) or the full record (API) | Ashby: `employmentType` field of each record |
-| **Deferred** | only knowable from the job page → applied by Step 2's hard filters after parsing | experience level on a site without that filter |
+| **Deferred** | only knowable from the job page → judged by Step 2 (the LLM reads the job text against your profile) | experience level on a site without that filter |
 
 ```python
 class LinkedIn(BrowserSource):
@@ -229,7 +229,7 @@ Rules:
 - **Coarse date filters** (site offers only 24h / week / month) → round up natively, then apply exactly locally; never miss jobs.
 - **Keywords:** browser sites run one query per keyword; API sources match any keyword locally (title by default).
 - **Not sortable by date** (`sorted_by_date = False`) → early stop off; `max_pages` alone limits depth.
-- Deferred filters are carried with the posting (`search_results` → posting) so Step 2 applies exactly the filters the search asked for.
+- Deferred fields are recorded with each search run (`search_runs.query.deferred`) and shown by `plan`. Step 2 doesn't re-apply search fields: preferences that matter beyond the search go in your Step 2 command, which the agent runs for every job ([step2 §2.1](step2-select.md#21-commandmd--run-for-every-job)).
 
 `auto-app plan` (and the start of every `collect`) prints where each field is applied:
 
@@ -244,7 +244,7 @@ uipath  (company UiPath · ashby, board uipath)
   search ml-engineer-us
     keywords             local     ['machine learning engineer', 'applied scientist']
     experience_levels    deferred  ['entry']
-  ! ml-engineer-us: experience_levels (copied from linkedin/ml-engineer-us) not supported by uipath → applied in Step 2
+  ! ml-engineer-us: experience_levels (copied from linkedin/ml-engineer-us) not supported by uipath → not filtered (state it in your Step 2 command if it matters)
 
 nvidia  (company NVIDIA · workday, board https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite)
   search new-grad
@@ -263,7 +263,7 @@ nvidia  (company NVIDIA · workday, board https://nvidia.wd5.myworkdayjobs.com/N
 
 | Source | Notes |
 |---|---|
-| **LinkedIn** | **Generated searches use the newer search page** `/jobs/search-results/` (what the search bar on linkedin.com/jobs opens). Its URL filters, found 2026-10-01 by applying each filter button and reading the URL: `keywords`; `geoId` (location; United States = 103644278 — the `location=` text is ignored); `f_TPR=r86400 / r604800 / r2592000` (Date posted: 24 h / week / month); **`f_SAL=f_SA_id_<filter>:<value>,<value>$…`** carries every multi-choice filter, despite the name — `225001` workplace (only Remote `272001`), `226001` employment type (Full-time `272015`, Part-time `273001`, Contract `274001`, Internship `275001`, Volunteer `272002`), `227001` experience level (Entry-level `276001`, Senior `277001`, Manager `278001`, Director `272003`, Executive `279001`); `f_AL=true` Easy Apply, `f_EA=true` Under 10 applicants, `f_JIYN=true` In my network (also seen: `f_C` company, `f_VJ`). The classic page's `f_WT`, `f_JT`, `f_E`, `sortBy` are ignored. Generic fields map onto these only where LinkedIn has an exact equivalent; a field with any value LinkedIn can't filter is deferred to Step 2 as a whole (with a `plan` notice), so no wanted value is filtered out; `site_filters` (`LinkedInFilters`) set the buttons directly. After the exact matches the page appends "related" results below a note ("…may not be exact matches, but could still be a great fit"), which ignore the filters: cards after the note are dropped and no further pages are read (`end_of_results` hook). Relevance order only → `sorted_by_date = False`; `start=` paging works (25 per page). Cards are `div[role=button]` without links; the job id is in `componentkey="job-card-component-ref-<id>"` (the `attr~regex` card-id form); a hidden " (Verified job)" title label is removed. The **classic page** `/jobs/search/` (`f_TPR, f_WT, f_JT, f_E, sortBy=DD`; cards `li[data-occludable-job-id]`) still works through `site_url`. Job pages are the same for both (`/jobs/view/<id>/`). Detail ready: `h2:has-text("About the job")` (2026-09 layout, hashed class names). Job data is in HTML, not JSON. Easy Apply jobs have no external URL. Strictest limits (40/h, 300/day). |
+| **LinkedIn** | **Generated searches use the newer search page** `/jobs/search-results/` (what the search bar on linkedin.com/jobs opens). Its URL filters, found 2026-10-01 by applying each filter button and reading the URL: `keywords`; `geoId` (location; United States = 103644278 — the `location=` text is ignored); `f_TPR=r86400 / r604800 / r2592000` (Date posted: 24 h / week / month); **`f_SAL=f_SA_id_<filter>:<value>,<value>$…`** carries every multi-choice filter, despite the name — `225001` workplace (only Remote `272001`), `226001` employment type (Full-time `272015`, Part-time `273001`, Contract `274001`, Internship `275001`, Volunteer `272002`), `227001` experience level (Entry-level `276001`, Senior `277001`, Manager `278001`, Director `272003`, Executive `279001`); `f_AL=true` Easy Apply, `f_EA=true` Under 10 applicants, `f_JIYN=true` In my network (also seen: `f_C` company, `f_VJ`). The classic page's `f_WT`, `f_JT`, `f_E`, `sortBy` are ignored. Generic fields map onto these only where LinkedIn has an exact equivalent; a field with any value LinkedIn can't filter is left unfiltered as a whole (with a `plan` notice), so no wanted value is filtered out; `site_filters` (`LinkedInFilters`) set the buttons directly. After the exact matches the page appends "related" results below a note ("…may not be exact matches, but could still be a great fit"), which ignore the filters: cards after the note are dropped and no further pages are read (`end_of_results` hook). Relevance order only → `sorted_by_date = False`; `start=` paging works (25 per page). Cards are `div[role=button]` without links; the job id is in `componentkey="job-card-component-ref-<id>"` (the `attr~regex` card-id form); a hidden " (Verified job)" title label is removed. The **classic page** `/jobs/search/` (`f_TPR, f_WT, f_JT, f_E, sortBy=DD`; cards `li[data-occludable-job-id]`) still works through `site_url`. Job pages are the same for both (`/jobs/view/<id>/`). Detail ready: `h2:has-text("About the job")` (2026-09 layout, hashed class names). Job data is in HTML, not JSON. Easy Apply jobs have no external URL. Strictest limits (40/h, 300/day). |
 | **Handshake** | School SSO login (`sources.handshake.limits.base_url` for school subdomains). Search URL format unverified → use `--interactive` or `site_url`. |
 | **Jobright** | Disabled: automated browsers get a Cloudflare check that won't load. Use by hand. |
 | **Ashby** | Official public API: `GET api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true` → full list with descriptions; country from `address.postalAddress`. Verified: UiPath (103 jobs). |
@@ -500,7 +500,7 @@ A shared employer job key overrides the vetoes (it is the same job id on the emp
 - New ID → fetched once, then Level 1b or 2 attaches it to the matching **active** job, which keeps its state.
 - **Archived jobs are excluded from linking** (Level 1b and Level 2). A new posting that would have matched one becomes a **new job** (and goes through Step 2 again) — but dedup still **checks** new jobs against archived jobs' kept matching keys (employer key, company + req id, description hash, company + title) and attaches a warning to the new job: *"looks like job #12, which you applied to on 2026-10-03"* / *"… which you declined on …"*. Steps 2–3 show the warning.
 - Deleted jobs (TTL, §9) leave nothing behind: a listing seen again later is collected and evaluated as new.
-- Whether reposts are wanted is a Step 2 preference (`reposted: skip | penalize | keep`).
+- Whether reposts are wanted is a Step 2 matter: write it in your Step 2 filter's command ("skip reposted jobs") and add `reposted` to its `filter.yaml` `job_details`.
 
 ### 7.6 Rollout and calibration
 1. **Parse** (C6) and **normalize** (C8a), with `employer_job_key()` tested on the real saved LinkedIn apply URLs and company postings.
