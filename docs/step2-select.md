@@ -261,7 +261,7 @@ Wherever the judges disagree, the filter recommends the job, so you label it any
 
 ### 7.4 Audit — `auto-app filter audit` (interactive)
 
-The **same full-screen app** as `job browse`, opened in audit mode: **only the Audit tab** — a **random sample** of each filter's both-no region, nothing else (pool tabs would invite labelling jobs that weren't drawn at random, and `job browse` has no Audit tab) — the usual detail pane, and an **evaluation panel** that updates the moment you label a job. Its footer lists only what's involved in an audit: no decisions (`a` / `n`), states (`m`) or narrowing (`s` / `c`) — those belong to `job browse`, and they're disabled here too.
+The **Audit** section (F2) of `auto-app ui` — the same app as `job browse` — opened in audit mode: **only the Audit tab** — a **random sample** of each filter's both-no region, nothing else (pool tabs would invite labelling jobs that weren't drawn at random, and `job browse` has no Audit tab) — the usual detail pane, and an **evaluation panel** that updates the moment you label a job. Its footer lists only what's involved in an audit: no decisions (`a` / `n`), states (`m`) or narrowing (`s` / `c`) — those belong to `job browse`, and they're disabled here too.
 
 ```
  Audit (8 left of 30)                                                                                    filter: all
@@ -367,7 +367,7 @@ The model retrains whenever new labels arrive, so its data — and the evaluatio
 
 ## 8. Review
 
-You review in **`auto-app job browse`**, a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below; it **opens on Recommended** by default (`--state` picks another tab). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
+You review in **`auto-app job browse`** — the **Jobs** section (F1) of `auto-app ui`, the one app for every interactive part (F2 Audit, F3 Step 3's Inbox) — a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below; it **opens on Recommended** by default (`--state` picks another tab). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
 
 ```
 ┌ Recommended (23) · Un-recommended (41) · Want to apply (3) ─┬ #28 Research Scientist, AI Accelerator … ───────────────┐

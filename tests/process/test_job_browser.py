@@ -3,8 +3,9 @@
 import pytest
 from typer.testing import CliRunner
 
+from tests.ui_helpers import ui_app
 from auto_app.core.db.job_ttl import apply_job_ttl
-from auto_app.process.job_browser import JobBrowser, JobBrowserApp, StateMenu
+from auto_app.process.job_browser import JobBrowser, StateMenu
 from auto_app.select.filters import load_filter
 from tests.core.test_job_ttl import seen_days_ago
 from tests.select.test_review import TTL, env, ids  # noqa: F401 — env is a fixture
@@ -49,12 +50,13 @@ def test_mark_keeps_in_tab_and_undo(browser):
 
 async def test_app_tabs_mark_menu_and_read_only(browser):
     db, b, jobs = browser
-    app = JobBrowserApp(b, open_url=lambda u: None, dark=lambda: False, start="all")
+    app = ui_app(b, open_url=lambda u: None, dark=lambda: False, start="all")
     async with app.run_test(size=(180, 45)) as pilot:
-        assert app.kind == "all" and ids(app.rows) == {jobs["ml"], jobs["sales"]}
-        while app.current()["job_id"] != jobs["sales"]:
+        s = app.screen
+        assert s.kind == "all" and ids(s.rows) == {jobs["ml"], jobs["sales"]}
+        while s.current()["job_id"] != jobs["sales"]:
             await pilot.press("down")
-        detail = str(app.query_one("#detail").render())
+        detail = str(s.query_one("#detail").render())
         assert "postings (1)" in detail and "matching keys" in detail and "not engineering" in detail
         await pilot.press("m")
         assert isinstance(app.screen, StateMenu)
@@ -65,13 +67,13 @@ async def test_app_tabs_mark_menu_and_read_only(browser):
         await pilot.press("u")
         assert db.job(jobs["sales"])["state"] == "un_recommended"
         await pilot.press("s", *"linkedin", "enter")
-        assert app.rows == [] and "source: linkedin" in str(app.query_one("#tabs").render())
+        assert s.rows == [] and "source: linkedin" in str(s.query_one("#tabs").render())
         await pilot.press("s", "ctrl+u", "enter")  # the box shows the current sources; cleared = every source
-        assert len(app.rows) == 2
+        assert len(s.rows) == 2
         await pilot.press("shift+tab")
-        assert app.kind == "archived" and ids(app.rows) == {jobs["analyst"]}
+        assert s.kind == "archived" and ids(s.rows) == {jobs["analyst"]}
         await pilot.press("a")
-        assert "not decide on it" in str(app.query_one("#status").render())
+        assert "not decide on it" in str(s.query_one("#status").render())
         assert db.job(jobs["analyst"])["decision"] == "applied"
         await pilot.press("b")  # but labelling an archived job is fine: it's training data
         assert db.feedback_of(jobs["analyst"])["ml"]["label"] is False

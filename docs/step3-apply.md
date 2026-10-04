@@ -14,7 +14,7 @@ want_to_apply ──► workers (several jobs at a time, paced by your apply pol
                                                          └──► submitted ──► job: applied
 ```
 
-Status: 📐 designed 2026-10-04 (replaces the earlier tailor-then-submit design; CV tailoring deferred, §11). Depends on Step 2's review (`want_to_apply`).
+Status: **A1 ✅** (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers, `apply inbox` with Hand-offs / Failed / Done — `src/auto_app/apply/`); A2–A7 designed. Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
 
 ---
 
@@ -193,7 +193,7 @@ The job stays `want_to_apply` (and doesn't expire) until submitted; then `applie
 
 ## 6. `auto-app apply inbox` — the interactive app
 
-Same Textual app style as `job browse`; tabs for what needs you, each with a count:
+The **Inbox** section (F3) of `auto-app ui` — the one app for every interactive part (F1 Jobs, F2 Audit); `apply inbox` opens it there. Tabs for what needs you, each with a count:
 
 | tab | each item | your keys |
 |---|---|---|
@@ -238,7 +238,7 @@ questions     (application_id, question_id, text, kind, options JSON, required,
 auto-app apply policy                      # check config/apply.yaml; print the effective policy
 auto-app apply profile                     # check profile.yaml / answers.yaml; list missing common answers
 auto-app apply queue                       # the want_to_apply queue, in the policy's order, with each job's chain
-auto-app apply run [--job N]… [--once]     # start the workers: prepare / submit within the pace (Ctrl+C stops cleanly)
+auto-app apply run [--job N]…              # start applications (A1: each to its first working applier — a hand-off); later: the workers, within the pace
 auto-app apply inbox                       # the interactive app: needs input, action needed, ready, hand-offs, failed, done
 auto-app apply list [--status S]           # application history
 ```
@@ -249,7 +249,7 @@ auto-app apply list [--status S]           # application history
 
 | # | Deliverable |
 |---|---|
-| A1 | `profile.yaml` / `answers.yaml` / `apply.yaml` loaders + checks (`apply profile`, `apply policy`, templates); `applications` / `attempts` / `questions` tables; `apply queue`; the applier interface and chain runner (fallback, retries, outcomes); **Simplify hand-off** and **manual** appliers; `apply inbox` with Hand-offs, Failed, Done; job → `applied` — usable from day one for every platform |
+| A1 ✅ | `profile.yaml` / `answers.yaml` / `apply.yaml` loaders + checks (`apply profile`, `apply policy`, templates); `applications` / `attempts` / `questions` tables; `apply queue`; the applier interface and chain runner (fallback, retries, outcomes); **Simplify hand-off** and **manual** appliers; `apply inbox` with Hand-offs, Failed, Done; job → `applied` — usable from day one for every platform. As built: `apply run` is one-shot (opens applications, moves each to its first working applier); the posting-still-open check and the pace apply to automated submission, so they come with A3 / A5 (a hand-off shows you the page); a chain naming an applier that isn't built yet skips it, recorded as "not built yet"; a failed application isn't reopened by `apply run` — retry it in the inbox; the `questions` table comes with A2 |
 | A2 | Questions: kinds, answer matching by meaning (confidence), sensitive-only-from-bank, choice mapping; **Needs input** tab (answer once for all, save to `answers.yaml`); notifications |
 | A3 | **Greenhouse** applier: prepare from the API, submit in the browser; **Ready to submit** review; Action needed |
 | A4 | **Lever** and **Ashby** appliers |

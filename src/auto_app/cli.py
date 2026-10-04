@@ -23,7 +23,7 @@ from auto_app.sources import SOURCES, get_adapter
 from auto_app.sources.filters import describe
 from auto_app.sources.registry import default_registry
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, help="A personal job-application pipeline. Step 1: collect jobs (source, collect, process, run). Step 2: judge them with your filters (filter). The pool: job. Storage: data.")
+app = typer.Typer(no_args_is_help=True, add_completion=False, help="A personal job-application pipeline. Step 1: collect jobs (source, collect, process, run). Step 2: judge them with your filters (filter). Step 3: apply (apply). The pool: job. Storage: data.")
 schedule_app = typer.Typer(no_args_is_help=True, help="Run `auto-app run` automatically (macOS launchd).")
 source_app = typer.Typer(no_args_is_help=True, help="Step 1 setup: sources (one plugin each), logins, health, what collect would run.")
 collect_app = typer.Typer(no_args_is_help=True, help="Step 1a: run the searches and save raw postings; fetch one job page; batch stats.")
@@ -31,6 +31,7 @@ process_app = typer.Typer(no_args_is_help=True, help="Step 1b: parse → normali
 job_app = typer.Typer(no_args_is_help=True, help="The job pool: list jobs, show one, set a job's state by hand.")
 filter_app = typer.Typer(no_args_is_help=True, help="Step 2: your filters — list and check them, run them on jobs, see why a job was judged so.")
 data_app = typer.Typer(no_args_is_help=True, help="Storage: inspect postings, export / import files, purge (job TTL + retention).")
+apply_app = typer.Typer(no_args_is_help=True, help="Step 3: apply to the jobs you queued — your profile and answers, the apply policy, the queue, the inbox.")
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(source_app, name="source")
 app.add_typer(collect_app, name="collect")
@@ -38,6 +39,7 @@ app.add_typer(process_app, name="process")
 app.add_typer(job_app, name="job")
 app.add_typer(filter_app, name="filter")
 app.add_typer(data_app, name="data")
+app.add_typer(apply_app, name="apply")
 
 OutOpt = Annotated[Optional[Path], typer.Option("--db", help="Database file (default: <project>/data/auto_app.db)")]
 ConfigOpt = Annotated[Optional[Path], typer.Option("--config", help="searches.yaml (default: <project>/config/searches.yaml)")]
@@ -301,6 +303,25 @@ def purge_cmd(
 
 
 
+@app.command("ui")
+def ui(
+    directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """Open the full-screen app: Jobs (F1), Audit (F2), Inbox (F3) — switch with the function keys."""
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`ui`")
+    _check_themes(cfg)
+    if not sys.stdout.isatty():
+        typer.echo("`ui` is a full-screen app — run it in a terminal", err=True)
+        raise typer.Exit(2)
+    _run_ui(cfg, store, load_filters(directory or FILTERS_DIR), "jobs")
+
+
 @schedule_app.command("install")
 def schedule_install(
     at: Annotated[list[str], typer.Option("--at", help="Time of day HH:MM (repeatable)")] = ["09:00"],
@@ -491,7 +512,7 @@ def job_browse(
     out: OutOpt = None,
 ):
     """Browse and review jobs in a full-screen app: tabs per state, details, filter verdicts; decide, rate, set states."""
-    from auto_app.process.job_browser import TABS, run_browser
+    from auto_app.process.job_browser import TABS
     from auto_app.select.filters import FILTERS_DIR, load_filters
 
     if state and state not in TABS:
@@ -505,7 +526,8 @@ def job_browse(
     if not sys.stdout.isatty():
         typer.echo("`job browse` is a full-screen app — run it in a terminal (or use `job list`)", err=True)
         raise typer.Exit(2)
-    run_browser(_browser(store, cfg, fs, filter_, source=source, company=company), start=state or "recommended", ui=cfg.ui)
+    _run_ui(cfg, store, fs, "jobs", jobs=_browser(store, cfg, fs, filter_, source=source, company=company),
+            jobs_tab=state or "recommended")
 
 
 def _browser(store, cfg: AppConfig, fs, only: list[str] | None, source=None, company=None):
@@ -513,6 +535,20 @@ def _browser(store, cfg: AppConfig, fs, only: list[str] | None, source=None, com
 
     return JobBrowser(store, list(fs.filters.values()), ttl=cfg.jobs.ttl_days, sources=source, company=company,
                       only_filters=only, noise_limit=cfg.select.noise_limit, audit_more=cfg.select.audit_more)
+
+
+def _run_ui(cfg: AppConfig, store, fs, start: str, jobs=None, audit=None, jobs_tab: str = "recommended") -> None:
+    """Open `auto-app ui` on one section; the others get their defaults (the inbox, if the apply policy loads)."""
+    from auto_app.apply.profile import load_me
+    from auto_app.ui import AutoApp
+
+    why = {}
+    try:
+        inbox = _applications(cfg, store)
+    except typer.Exit:
+        inbox, why["inbox"] = None, "The apply policy (config/apply.yaml) doesn't load — run `auto-app apply policy`."
+    AutoApp(jobs=jobs or _browser(store, cfg, fs, None), audit=audit or _browser(store, cfg, fs, None), inbox=inbox,
+            cv=load_me(get_paths().home).cv, start=start, jobs_tab=jobs_tab, ui=cfg.ui, why=why).run()
 
 
 def _known_filters(store, fs, names: list[str] | None) -> None:
@@ -1228,7 +1264,6 @@ def filter_audit(
     out: OutOpt = None,
 ):
     """Label random samples of each filter's "no" jobs, with the live evaluation panel — measures how often it wrongly rejects."""
-    from auto_app.process.job_browser import run_browser
     from auto_app.select import audit
     from auto_app.select.filters import FILTERS_DIR, load_filters
 
@@ -1247,7 +1282,7 @@ def filter_audit(
             flt = fs.filters.get(name)
             d = audit.draw(store, name, size or cfg.select.audit_size, flt.version if flt else None)
             typer.echo(f"{name}: drew {len(d.jobs)} of {d.pool_size} \"no\" jobs" if d else f"{name}: no unlabelled \"no\" jobs to draw")
-    run_browser(browser, ui=cfg.ui, audit_mode=True)
+    _run_ui(cfg, store, fs, "audit", audit=browser)
 
 
 @filter_app.command("eval")
@@ -1277,6 +1312,134 @@ def filter_eval(
                f"({cfg.select.noise_limit:.0%}) · label more: auto-app filter audit")
 
 
+# ---- Step 3: apply ------------------------------------------------------------------------------------
+
+def _applications(cfg: AppConfig, store, opener=None):
+    from auto_app.apply.appliers import registry
+    from auto_app.apply.policy import load_policy
+    from auto_app.apply.queue import Applications
+
+    policy, problem = load_policy(get_paths().apply_policy)
+    if problem:
+        typer.echo(f"✗ {problem} — fix it (`auto-app apply policy`)", err=True)
+        raise typer.Exit(2)
+    return Applications(store, policy, registry(opener), ttl=cfg.jobs.ttl_days)
+
+
+@apply_app.command("profile")
+def apply_profile():
+    """Check profile/profile.yaml, answers.yaml and your CV; list the common answers still missing."""
+    from auto_app.apply.profile import format_me, load_me
+
+    me = load_me(get_paths().home)
+    typer.echo(format_me(me))
+    if me.problems:
+        raise typer.Exit(1)
+
+
+@apply_app.command("policy")
+def apply_policy():
+    """Check config/apply.yaml (or the defaults) and print the effective policy: pace, order, applier chains."""
+    from auto_app.apply.appliers import PLANNED, registry
+    from auto_app.apply.policy import check_policy, format_policy, load_policy
+
+    path = get_paths().apply_policy
+    policy, problem = load_policy(path)
+    typer.echo(f"{path}" + ("" if path.is_file() else " (not found — the defaults; template: config/apply.example.yaml)"))
+    if problem:
+        typer.echo(f"✗ {problem}", err=True)
+        raise typer.Exit(1)
+    typer.echo(format_policy(policy, set(registry()), set(PLANNED)))
+    problems = check_policy(policy, set(registry()), set(PLANNED))
+    for x in problems:
+        typer.echo(f"  ✗ {x}")
+    if problems:
+        raise typer.Exit(1)
+
+
+@apply_app.command("queue")
+def apply_queue(config: ConfigOpt = None, out: OutOpt = None):
+    """The jobs you queued (want to apply), in the policy's order, with each one's platform, applier chain and status."""
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`apply queue`")
+    rows = _applications(cfg, store).queue()
+    if not rows:
+        typer.echo("nothing queued — mark jobs `a` (want to apply) in `auto-app job browse`")
+        return
+    for j in rows:
+        app_ = j["application"]
+        status = f"{app_['status']} ({app_.get('applier') or '—'})" if app_ else "not started"
+        typer.echo(f"#{j['job_id']:<5} {(j.get('company') or '')[:18]:<18} {(j.get('title') or '')[:44]:<44} "
+                   f"{j['platform']:<20} {' → '.join(j['chain']):<32} {status}")
+    typer.echo(f"\n{len(rows)} queued · `auto-app apply run` starts them · `auto-app apply inbox` for what needs you")
+
+
+@apply_app.command("run")
+def apply_run(
+    job: Annotated[Optional[list[int]], typer.Option("--job", "-j", help="Only these jobs (repeatable)")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """Start applications for the queued jobs: each goes through its applier chain (A1: to a hand-off in the inbox)."""
+    from auto_app.apply.profile import load_me
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`apply run`")
+    me = load_me(get_paths().home)
+    if me.problems:
+        typer.echo("fix your profile first (`auto-app apply profile`):\n  " + "\n  ".join(me.problems), err=True)
+        raise typer.Exit(2)
+    apps = _applications(cfg, store)
+    counts = apps.run(job)
+    if not counts:
+        typer.echo("nothing to start — every queued job already has an application (`auto-app apply queue`)")
+        return
+    typer.echo("started: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+    if counts.get("handoff"):
+        typer.echo("hand-offs are waiting for you: auto-app apply inbox")
+
+
+@apply_app.command("inbox")
+def apply_inbox(config: ConfigOpt = None, out: OutOpt = None):
+    """Open the inbox: hand-offs to apply to (Simplify / manual), failed applications, done."""
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`apply inbox`")
+    _check_themes(cfg)
+    if not sys.stdout.isatty():
+        typer.echo("`apply inbox` is a full-screen app — run it in a terminal (or use `apply list`)", err=True)
+        raise typer.Exit(2)
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+
+    _run_ui(cfg, store, load_filters(FILTERS_DIR), "inbox")
+
+
+@apply_app.command("list")
+def apply_list(
+    status: Annotated[Optional[str], typer.Option(help="Only this status: queued | handoff | failed | submitted | dropped")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """Application history: every application, its status, applier and attempts."""
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`apply list`")
+    apps = _applications(cfg, store)
+    rows = apps.rows((status,) if status else None)
+    if not rows:
+        typer.echo("no applications" + (f" with status {status}" if status else "") + " yet")
+        return
+    for r in rows:
+        when = f" {str(r['submitted_at'])[:10]}" if r.get("submitted_at") else ""
+        tried = len(apps.attempts(r["application_id"]))
+        typer.echo(f"app {r['application_id']:<4} job #{r['job_id']:<5} {(r.get('company') or '')[:18]:<18} "
+                   f"{(r.get('title') or '')[:40]:<40} {r['platform']:<20} {r['status']}{when} "
+                   f"({r.get('applier') or '—'}, {tried} attempt{'s' if tried != 1 else ''})")
+
+
 # Subcommands are listed in workflow order, not in the order they're defined above.
 _ORDER = {
     source_app: ["list", "show", "add", "login", "health", "plan"],
@@ -1286,6 +1449,7 @@ _ORDER = {
     filter_app: ["list", "show", "run", "why", "audit", "eval", "reparse"],
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],
+    apply_app: ["profile", "policy", "queue", "run", "inbox", "list"],
 }
 for _group, _names in _ORDER.items():
     _group.registered_commands.sort(key=lambda c: _names.index(c.name))

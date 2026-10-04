@@ -1,0 +1,28 @@
+# Your answer bank for Step 3 (docs/step3-apply.md §2, §4). Questions on application forms are matched to these
+# entries by meaning; anything not here is asked in `auto-app apply inbox` (and can be saved here from there).
+# Sensitive questions (work authorization, sponsorship, demographics, legal) are only ever answered from here or
+# by you. kind: fact (default) | free_text — saved free text counts as your answer (doesn't stop auto mode);
+# {company} / {title} are filled in; adapt: true lets Claude tailor it lightly (then it's shown as a draft).
+work_authorization:
+  question: "Are you legally authorized to work in the United States?"
+  answer: "Yes"
+requires_sponsorship:
+  question: "Will you now or in the future require visa sponsorship?"
+  answer: "Yes"
+earliest_start:
+  question: "When can you start?"
+  answer: "January 2027"
+relocation:
+  question: "Are you willing to relocate?"
+  answer: "Yes"
+salary_expectation:
+  question: "What are your salary expectations?"
+  answer: "Open; market rate for the role"
+eeo_gender:
+  question: "Gender"
+  answer: "Decline to self-identify"
+why_company:
+  question: "Why do you want to work at {company}?"
+  answer: "I want to build ML systems that ship to production, and {company}'s work in this area is a strong match."
+  kind: free_text
+  adapt: true

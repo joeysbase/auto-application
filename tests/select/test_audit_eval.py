@@ -5,8 +5,9 @@ import random
 import pytest
 from typer.testing import CliRunner
 
+from tests.ui_helpers import ui_app
 from auto_app.core.db.store import DbStore
-from auto_app.process.job_browser import JobBrowserApp
+
 from auto_app.select import audit
 from auto_app.select.evaluate import clean_audits_needed, evaluate, exact_upper, format_eval, wilson
 from auto_app.settings import Paths
@@ -61,32 +62,33 @@ def test_evaluation_numbers(env):  # noqa: F811
 async def test_audit_tab_keys_and_live_panel(env):  # noqa: F811
     db, rv, jobs, _ = env
     rv.draw(5)  # every filter's "no" jobs: ml → sales, analyst; research → ml, sales
-    app = JobBrowserApp(rv, audit_mode=True, dark=lambda: False)
+    app = ui_app(rv, audit_mode=True, dark=lambda: False)
     async with app.run_test(size=(180, 50)) as pilot:
-        assert ids(app.rows) == set(jobs.values())
-        tabs = str(app.query_one("#tabs").render())
+        s = app.screen
+        assert ids(s.rows) == set(jobs.values())
+        tabs = str(s.query_one("#tabs").render())
         assert "Audit (3 left of 3)" in tabs and "Recommended" not in tabs and "All" not in tabs  # only drawn jobs
         await pilot.press("tab")
-        assert app.kind == "audit"  # nowhere else to go
-        panel = str(app.query_one("#eval").render())
+        assert s.kind == "audit"  # nowhere else to go
+        panel = str(s.query_one("#eval").render())
         assert "ml  (as used)" in panel and "research  (as used)" in panel and "2 waiting" in panel
-        while app.current()["job_id"] != jobs["sales"]:
+        while s.current()["job_id"] != jobs["sales"]:
             await pilot.press("down")
         await pilot.press("B")  # bad for both filters: both rightly said no
         fb = db.feedback_of(jobs["sales"])
         assert (fb["ml"]["label"], fb["research"]["label"]) == (False, False)
-        assert "Audit (2 left of 3)" in str(app.query_one("#tabs").render())
-        assert "1 audited, 0 missed" in str(app.query_one("#eval").render())  # the panel updated at once
+        assert "Audit (2 left of 3)" in str(s.query_one("#tabs").render())
+        assert "1 audited, 0 missed" in str(s.query_one("#eval").render())  # the panel updated at once
         await pilot.press("u")
         assert db.feedback_of(jobs["sales"]) == {}  # one undo for both labels
-        app.query_one("DataTable").move_cursor(row=[j["job_id"] for j in app.rows].index(jobs["analyst"]))
+        s.query_one("DataTable").move_cursor(row=[j["job_id"] for j in s.rows].index(jobs["analyst"]))
         await pilot.press("g")  # analyst: a good job ml rejected — a miss
         assert db.feedback_of(jobs["analyst"])["ml"]["label"] is True
-        assert app.cells(next(j for j in app.rows if j["job_id"] == jobs["analyst"]), {})[0] == "✗"
+        assert s.cells(next(j for j in s.rows if j["job_id"] == jobs["analyst"]), {})[0] == "✗"
         await pilot.press("e")
-        assert not app.show_eval
+        assert not s.show_eval
         await pilot.press("d")  # nothing left to draw
-        assert "nothing left to draw" in str(app.query_one("#status").render())
+        assert "nothing left to draw" in str(s.query_one("#status").render())
         await pilot.press("q")
 
 
@@ -133,9 +135,10 @@ def test_migration_converts_ratings_and_frees_archived_identities(tmp_path):
 async def test_job_browse_has_no_audit_tab_and_cannot_draw(env):  # noqa: F811
     db, rv, jobs, _ = env
     rv.draw(1)  # one per filter: each still has a "no" job left to draw
-    app = JobBrowserApp(rv, dark=lambda: False)
+    app = ui_app(rv, dark=lambda: False)
     async with app.run_test(size=(180, 50)) as pilot:
-        assert "Audit" not in str(app.query_one("#tabs").render())
+        s = app.screen
+        assert "Audit" not in str(s.query_one("#tabs").render())
         await pilot.press("d")
         assert audit.total_items(db) == 2  # nothing more drawn outside `filter audit`
         await pilot.press("q")
@@ -144,41 +147,44 @@ async def test_job_browse_has_no_audit_tab_and_cannot_draw(env):  # noqa: F811
 async def test_after_labelling_the_cursor_goes_to_the_next_unlabelled_job(env):  # noqa: F811
     db, rv, jobs, _ = env
     rv.draw(5)  # ml → sales, analyst; research → ml, sales (sales: sampled for both filters)
-    app = JobBrowserApp(rv, audit_mode=True, dark=lambda: False)
+    app = ui_app(rv, audit_mode=True, dark=lambda: False)
     async with app.run_test(size=(180, 50)) as pilot:
-        order = [j["job_id"] for j in app.rows]
-        app.query_one("DataTable").move_cursor(row=order.index(jobs["sales"]))
+        s = app.screen
+        order = [j["job_id"] for j in s.rows]
+        s.query_one("DataTable").move_cursor(row=order.index(jobs["sales"]))
         await pilot.pause()
-        names = [v.filter for v in app.detail.verdicts]
-        app.filter_index = names.index("ml")
+        names = [v.filter for v in s.detail.verdicts]
+        s.filter_index = names.index("ml")
         await pilot.press("b")  # sales: labelled for ml, research still to do → stay, research picked
-        assert app.current()["job_id"] == jobs["sales"] and names[app.filter_index] == "research"
+        assert s.current()["job_id"] == jobs["sales"] and names[s.filter_index] == "research"
         await pilot.press("b")  # sales done → the next still-to-label job, not where sales moved to
-        nxt = app.current()["job_id"]
-        assert nxt != jobs["sales"] and None in next(j for j in app.rows if j["job_id"] == nxt)["audit"].values()
+        nxt = s.current()["job_id"]
+        assert nxt != jobs["sales"] and None in next(j for j in s.rows if j["job_id"] == nxt)["audit"].values()
         await pilot.press("B")
         await pilot.press("B")  # the last one
-        assert all(None not in j["audit"].values() for j in app.rows)
-        assert "all labelled — d draws more" in str(app.query_one("#status").render())
+        assert all(None not in j["audit"].values() for j in s.rows)
+        assert "all labelled — d draws more" in str(s.query_one("#status").render())
         await pilot.press("q")
 
 
 async def test_each_app_shows_only_its_own_keys(env):  # noqa: F811
     db, rv, jobs, _ = env
     rv.draw(5)
-    app = JobBrowserApp(rv, audit_mode=True, dark=lambda: False)
+    app = ui_app(rv, audit_mode=True, dark=lambda: False)
     async with app.run_test(size=(200, 50)) as pilot:
+        s = app.screen
         names = {b.binding.action.split("(")[0] for b in app.active_bindings.values()}
-        shown = {n for n in names if app.check_action(n, ()) is not False}
+        shown = {n for n in names if s.check_action(n, ()) is not False}
         assert {"label", "label_all", "draw", "toggle_eval", "undo", "filter", "open_link", "quit"} <= shown
         assert not shown & {"decide", "mark", "narrow", "next_list"}
-        before = db.job(app.current()["job_id"])["decision"]
+        before = db.job(s.current()["job_id"])["decision"]
         await pilot.press("a", "n", "m")  # do nothing in an audit
-        assert db.job(app.current()["job_id"])["decision"] == before and len(app.screen_stack) == 1
+        assert db.job(s.current()["job_id"])["decision"] == before and app.screen is s  # no pop-up opened
         await pilot.press("q")
-    app = JobBrowserApp(rv, dark=lambda: False)
+    app = ui_app(rv, dark=lambda: False)
     async with app.run_test(size=(200, 50)) as pilot:
-        assert app.check_action("draw", ()) is False and app.check_action("decide", ()) is True
+        s = app.screen
+        assert s.check_action("draw", ()) is False and s.check_action("decide", ()) is True
         await pilot.press("q")
 
 

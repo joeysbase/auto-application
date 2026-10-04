@@ -9,6 +9,8 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-04 | `auto-app ui`: Jobs (F1), Audit (F2), Inbox (F3) in one app — section bar with what's waiting, state kept per section; `job browse` / `filter audit` / `apply inbox` open it on their section | 2–3 | ✅ done | [2026-10-04-auto-app-ui](2026-10-04-auto-app-ui.md) |
+| 2026-10-04 | Step 3 A1: profile / answers / apply policy, applier chains with fallback, **Simplify hand-off** + manual, `apply queue / run / inbox / list` | 3 | ✅ done | [2026-10-04-step3-a1](2026-10-04-step3-a1.md) |
 | 2026-10-04 | Design: Step 3 — parallel appliers with fallback chains (Simplify hand-off first), needs-input queue + `apply inbox`, YAML profile / answers up front, review or auto-submit; no LinkedIn Easy Apply automation; tailoring deferred | 3 | 📐 designed | [2026-10-04-step3-design](2026-10-04-step3-design.md) |
 | 2026-10-04 | Agent answers **fit + dealbreaker** (recommend = fit and no dealbreaker; older answers still read); evaluation by cause; preference model deferred | 2 | ✅ done | [2026-10-04-fit-dealbreaker](2026-10-04-fit-dealbreaker.md) |
 | 2026-10-04 | Step 2 S4: judged jobs archived as training data (purge bug fixed; dedup within the archive; re-seen listing = new job), good / bad labels, `filter audit` (Audit tab + live evaluation panel), `filter eval` | 1–2 | ✅ done | [2026-10-04-s4-audit-eval](2026-10-04-s4-audit-eval.md) |
@@ -60,7 +62,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
 | Step 2 S5 (deferred — evaluation decides): preference model, fit only, dealbreaker veto | 2 | [step2 §7.5–7.6](../step2-select.md) |
-| Step 3 A1: profile / answers / policy, applier chain runner, Simplify hand-off + manual, `apply inbox` (hand-offs) | 3 | [step3 §10](../step3-apply.md) |
+| Step 3 A2: questions — answer matching by meaning (Claude CLI), sensitive-only-from-bank, the Needs input tab | 3 | [step3 §4, §10](../step3-apply.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).
 

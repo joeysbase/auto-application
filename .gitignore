@@ -9,6 +9,7 @@ out/
 
 # personal config, browser logins, and collected data
 config/searches.yaml
+config/apply.yaml
 browser-profiles/
 data/
 
@@ -17,3 +18,6 @@ filters/
 
 # global settings and secrets (template: .env.example)
 .env
+
+# Step 3: your profile, answer bank and CV (templates in profile.example/)
+profile/

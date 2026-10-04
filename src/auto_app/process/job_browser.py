@@ -14,14 +14,13 @@ more; `e` shows the evaluation panel, recomputed after every label. Your answers
 import webbrowser
 
 from rich.markup import escape
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from auto_app.core.appearance import system_dark
 from auto_app.core.config import UiConfig
 from auto_app.process.jobs_view import STATE_LABEL, _cut, _date, expiry, format_job
 from auto_app.select import audit
@@ -193,9 +192,11 @@ class StateMenu(ModalScreen):
         self.dismiss(event.option.id)
 
 
-class JobBrowserApp(App):
-    TITLE = "auto-app jobs"
-    CSS = """
+class JobsScreen(Screen):
+    """The Jobs section of `auto-app ui` (or, with audit_mode, the Audit section)."""
+
+    DEFAULT_CSS = """
+    #sections { height: 1; padding: 0 1; background: $panel; }
     #tabs { height: 1; padding: 0 1; background: $boost; }
     #main { height: 1fr; }
     #list { width: 3fr; min-width: 50; }
@@ -227,12 +228,12 @@ class JobBrowserApp(App):
         Binding("d", "draw", "draw more"),
         Binding("e", "toggle_eval", "evaluation"),
         Binding("escape", "cancel", show=False),
-        Binding("q", "quit", "quit"),
+        Binding("q", "app.quit", "quit"),
     ]
     COLUMNS = (" ", "#", "company", "title", "posted", "state", "expires", "")
 
-    def __init__(self, browser: JobBrowser, open_url=webbrowser.open, start: str = "recommended", ui: UiConfig | None = None,
-                 dark=system_dark, show_eval: bool = False, audit_mode: bool = False):
+    def __init__(self, browser: JobBrowser, open_url=webbrowser.open, start: str = "recommended",
+                 show_eval: bool = False, audit_mode: bool = False):
         super().__init__()
         self.show_eval = show_eval or audit_mode
         self.audit_mode = audit_mode
@@ -242,9 +243,6 @@ class JobBrowserApp(App):
             self.sub_title = "audit — randomly drawn \"no\" jobs"
         self.browser = browser
         self.open_url = open_url
-        self.ui = ui or UiConfig()
-        self.system_dark = dark  # () -> bool | None; polled while theme is auto
-        self.last_dark: bool | None = None
         self.kind = start
         self.search = ""
         self.rows: list[dict] = []
@@ -254,6 +252,7 @@ class JobBrowserApp(App):
         self.detail = None
 
     def compose(self) -> ComposeResult:
+        yield Static(id="sections")
         yield Static(id="tabs")
         yield Static(id="eval", classes="show" if self.show_eval else "")
         with Horizontal(id="main"):
@@ -265,24 +264,15 @@ class JobBrowserApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        if self.ui.theme == "auto":
-            self.follow_system()
-            self.set_interval(FOLLOW_EVERY_S, self.follow_system)
-        else:
-            self.theme = self.ui.theme
         table = self.query_one(DataTable)
         table.add_columns(*self.COLUMNS)
         self.reload()
         table.focus()
 
-    def follow_system(self) -> None:
-        """theme auto: switch when the system's light / dark mode changes (a theme picked with ctrl+p stays
-        until then)."""
-        dark = self.system_dark()
-        if dark is None or dark == self.last_dark:
-            return
-        self.last_dark = dark
-        self.theme = self.ui.dark_theme if dark else self.ui.light_theme
+    def on_screen_resume(self) -> None:
+        """Back in this section: another section may have changed the data (e.g. a job queued, labelled)."""
+        if self.is_mounted:
+            self.reload()
 
     # ---- drawing --------------------------------------------------------------------------------
 
@@ -301,6 +291,9 @@ class JobBrowserApp(App):
         self.draw_tabs()
         self.draw_eval()
         self.show_detail()
+        refresh = getattr(self.app, "refresh_sections", None)
+        if refresh:
+            refresh()
 
     def draw_eval(self) -> None:
         """The evaluation panel (§7.6): recomputed from the database — every label shows at once."""
@@ -327,7 +320,9 @@ class JobBrowserApp(App):
             n = f"{counts[k]} left of {counts['audit_total']}" if k == "audit" else counts[k]
             return f"{TAB_TITLES[k]} ({n})"
 
-        parts = [(f"[reverse] {title(k)} [/]" if k == self.kind else f" {title(k)} ") for k in self.tabs]
+        # each tab is clickable: [@click=screen.goto('…')]
+        parts = [(f"[reverse] {title(k)} [/]" if k == self.kind else f"[@click=screen.goto('{k}')] {title(k)} [/]")
+                 for k in self.tabs]
         b = self.browser
         notes = [f"source: {', '.join(b.sources)}" if b.sources else "", f"company: {b.company}" if b.company else "",
                  f"filter: {', '.join(sorted(b.only))}" if b.only else "", f"search: {self.search}" if self.search else ""]
@@ -376,7 +371,7 @@ class JobBrowserApp(App):
     # ---- actions --------------------------------------------------------------------------------
 
     def check_action(self, action: str, parameters) -> bool | None:
-        if len(self.screen_stack) > 1:
+        if self.app.screen is not self:
             return False  # a pop-up (the state menu) is open: its own keys only
         # while typing a search, reason, source or company, keys go to the text box (tab, arrows, letters)
         if self.prompt_mode is not None and action not in ("cancel", "quit"):
@@ -401,6 +396,11 @@ class JobBrowserApp(App):
         self.reload()
         self.query_one(DataTable).move_cursor(row=0)
         self.show_detail()
+
+    def action_goto(self, kind: str) -> None:
+        """A click on a tab."""
+        if kind in self.tabs and kind != self.kind and self.prompt_mode is None:
+            self._switch(self.tabs.index(kind) - self.tabs.index(self.kind))
 
     def action_next_list(self) -> None:
         self._switch(1)
@@ -509,7 +509,7 @@ class JobBrowserApp(App):
             self.status(f"#{job['job_id']}: {STATE_LABEL[to]} — saved")
             self.reload(job["job_id"])
 
-        self.push_screen(StateMenu(job), done)
+        self.app.push_screen(StateMenu(job), done)
 
     def action_undo(self) -> None:
         what = self.browser.undo()
@@ -585,7 +585,3 @@ def check_themes(ui: UiConfig) -> list[str]:
 
     names = [ui.light_theme, ui.dark_theme] + ([] if ui.theme == "auto" else [ui.theme])
     return [n for n in names if n not in BUILTIN_THEMES]
-
-
-def run_browser(browser: JobBrowser, start: str = "recommended", ui: UiConfig | None = None, audit_mode: bool = False) -> None:
-    JobBrowserApp(browser, start=start, ui=ui, audit_mode=audit_mode).run()

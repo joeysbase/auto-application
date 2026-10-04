@@ -2,7 +2,7 @@
 
 A personal pipeline that finds job postings, picks the ones worth applying to, and prepares applications. Design: [`docs/README.md`](docs/README.md) (overview) and one doc per step. Progress log: [`docs/updates/`](docs/updates/README.md).
 
-**Implemented: Step 1 — Collect.** Postings from **job sites** (LinkedIn, verified) and **company career sites** (one plugin per company on the Ashby, Greenhouse, Lever and Workday platforms — verified on UiPath, NVIDIA, Adobe, Palantir) are collected, parsed into common fields, normalized, and deduplicated into **jobs**, stored in a local SQLite database. **Step 2 — Select** is being built: **filters** (one folder each — a command, its settings, optional parser) are written by you, and `filter run` runs each filter's agent on the jobs (Claude API, your Claude Code login, or DeepSeek — with web lookups) and marks them recommended / un_recommended (S1–S2); review comes next (S3). Step 3 (apply) is designed, not built.
+**Implemented: Step 1 — Collect.** Postings from **job sites** (LinkedIn, verified) and **company career sites** (one plugin per company on the Ashby, Greenhouse, Lever and Workday platforms — verified on UiPath, NVIDIA, Adobe, Palantir) are collected, parsed into common fields, normalized, and deduplicated into **jobs**, stored in a local SQLite database. **Implemented: Step 2 — Select.** **Filters** (one folder each — a command, its settings, optional parser) are written by you; `filter run` runs each filter's agent on the jobs (Claude API, your Claude Code login, or DeepSeek — with web lookups), which answers **fit** + **dealbreaker**; you review and label in `job browse`, audit rejections in `filter audit`, and measure each filter with `filter eval`. **Step 3 — Apply** is being built: A1 works the jobs you queued through per-platform **applier chains** — today the **Simplify hand-off** (your Chrome autofills, you submit) and **manual** — with `apply inbox` for what needs you; automated appliers (Greenhouse, Lever, Ashby, …) come next.
 
 ---
 
@@ -16,9 +16,11 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
   - [`source`](#source--step-1-setup-where-jobs-come-from) — `list`, `show`, `add`, `login`, `health`, `plan`
   - [`collect`](#collect--step-1a-run-the-searches) — `run`, `probe`, `stats`
   - [`process`](#process--step-1b-postings--jobs) — `parse`, `normalize`, `dedup`
+  - [`ui`](#ui--every-interactive-part-in-one-app) — Jobs (F1), Audit (F2), Inbox (F3)
   - [`run` and `schedule`](#run-and-schedule--all-of-step-1-automatically)
   - [`job`](#job--the-job-pool) — `list`, `show`, `browse`, `mark`
   - [`filter`](#filter--step-2-judge-jobs-with-your-filters) — `list`, `show`, `run`, `why`, `audit`, `eval`, `reparse`
+  - [`apply`](#apply--step-3-apply-to-the-jobs-you-queued) — `profile`, `policy`, `queue`, `run`, `inbox`, `list`
   - [`data`](#data--storage) — `inspect`, `export`, `import`, `purge`
 - [Where the data goes](#where-the-data-goes)
 - [Safety](#safety)
@@ -33,6 +35,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
 uv sync
 cp config/searches.example.yaml config/searches.yaml   # what to search — then edit (git-ignored)
 cp .env.example .env                                   # global settings + your API key — then edit (git-ignored)
+cp -r profile.example profile                          # Step 3: your profile, answers, CV (git-ignored) — then edit
 uv run auto-app --help
 ```
 
@@ -54,6 +57,7 @@ Job sites use your installed **Google Chrome** (fallback: `uv run playwright ins
 | **Job state** | Step 2's verdict (`recommended` / `un_recommended`, set by `filter run`) and your decision — `want_to_apply` (queued for Step 3) or `not_applied`, set when you review in `job browse`; `applied` will be set by Step 3. A new job is *not evaluated*. Any state can also be set by hand with `auto-app job mark` |
 | **Label** | in `job browse` / `filter audit`, your answer for one job and one filter: should that filter **recommend** this job or **not** (`g` / `b`) — about the job, not a grade of what the filter said. Compared with its verdict, it says whether the filter was right; kept per filter as the training data for its preference model (later) |
 | **Audit** | random samples of a filter's "no" jobs that you label, to measure its **noise** — how often it wrongly rejects (`filter audit`, `filter eval`) |
+| **Applier** | Step 3: something that applies to one kind of application form. Each platform has an ordered **chain** of appliers (`config/apply.yaml`); when one can't handle a job, the next takes over. A **hand-off** applier (Simplify, manual) gives the job to you to submit |
 | **Job TTL** | A job expires `AUTO_APP_JOBS__TTL_DAYS__*` days (in `.env`) after its postings were last seen: jobs a filter judged (recommended or un-recommended) or you decided on are **archived** — kept as training data, never merged with active jobs; jobs never judged are **deleted** (with their postings) |
 
 ## Configuration
@@ -150,6 +154,15 @@ uv run auto-app job browse                                    # review (opens on
 uv run auto-app filter audit                                  # label random "no" jobs: how often each filter misses
 uv run auto-app filter eval                                   # precision, noise, recall per filter
 uv run auto-app job list --state want_to_apply               # your queue for Step 3
+```
+
+**Applying (Step 3)**
+```bash
+cp -r profile.example profile && cp ~/Documents/cv.pdf profile/cv.pdf   # then fill in profile/*.yaml
+uv run auto-app apply profile                                 # what's missing
+uv run auto-app apply queue                                   # the jobs you queued, each with its applier chain
+uv run auto-app apply run                                     # start them (today: hand-offs)
+uv run auto-app apply inbox                                   # open each in Chrome (Simplify autofills), submit, press a
 ```
 
 **Checking a new site or company**
@@ -365,6 +378,32 @@ uv run auto-app process dedup
 
 ---
 
+### `ui` — every interactive part in one app
+
+```bash
+uv run auto-app ui
+```
+One full-screen app (in your terminal) with a section for each interactive part — switch by **clicking** a section in the top bar, with the **function keys**, or with **`[` / `]`** (previous / next — use these where F-keys are taken, e.g. F3 in VS Code's terminal, or press fn+F1… on a Mac):
+
+| key | section | what it is | also opened by |
+|---|---|---|---|
+| **F1** (or click, `[` `]`) | **Jobs** | the job pool and your review — [`job browse`](#job-browse) | `auto-app job browse` (with its options) |
+| **F2** | **Audit** | random samples of each filter's "no" jobs, with the evaluation panel — [`filter audit`](#filter-audit) | `auto-app filter audit` (which draws samples first) |
+| **F3** | **Inbox** | Step 3: hand-offs, failed and done applications — [`apply inbox`](#apply-inbox) | `auto-app apply inbox` |
+
+- The **bar at the top** shows the sections and what's waiting in each — `Audit (8 left)`, `Inbox (2 waiting, 1 failed)` — with the current one highlighted.
+- Each section **keeps its state** (tab, cursor, search, narrowing) while you're in another, and **reloads when you come back** — a job you queued in Jobs shows up in Inbox once `apply run` started it.
+- **The mouse works:** click a section in the top bar, a tab in a section's tab bar, or a row in the list to select it.
+- The **footer** lists only the current section's keys; `ctrl+p` (the command palette) also has "Go to Jobs / Audit / Inbox". Switching is ignored while a pop-up (e.g. the state menu) is open; in a search or reason box, `[` and `]` are typed as usual.
+- Audit stays isolated: only the randomly drawn jobs and audit keys (Jobs' narrowing doesn't affect it).
+- If a section can't open (e.g. `config/apply.yaml` doesn't load), it says why instead.
+
+| Option | |
+|---|---|
+| `--dir PATH` | another filters folder |
+
+---
+
 ### `run` and `schedule` — all of Step 1, automatically
 
 #### `run`
@@ -437,7 +476,7 @@ uv run auto-app job show 28 --description
 ```
 
 #### `job browse`
-The job pool in a **full-screen app** (in your terminal) — and where you **review** what your filters found: decide on each job, and say for each filter whether it should recommend it. Every key saves at once; nothing is submitted anywhere. (The same app runs audits: [`filter audit`](#filter-audit).)
+The job pool in a **full-screen app** (in your terminal) — and where you **review** what your filters found: decide on each job, and say for each filter whether it should recommend it. Every key saves at once; nothing is submitted anywhere. It's the **Jobs** section (F1) of [`auto-app ui`](#ui--every-interactive-part-in-one-app) — `job browse` opens the app there; F2 / F3 switch to Audit and Inbox.
 
 ```
  All (64) · Not evaluated (12) · [Recommended (23)] · Un-recommended (41) · Want to apply (3) · Applied · Not applied · Archived
@@ -596,7 +635,7 @@ uv run auto-app filter why 28 --trace
 ```
 
 #### `filter audit`
-Measures how often each filter **wrongly rejects** — its **noise** — by having you label **random samples** of its "no" jobs. Opens the [`job browse`](#job-browse) app in **audit mode**: **only the Audit tab** — the randomly drawn jobs, nothing else (labelling other jobs here would bias the estimate) — with the **evaluation panel** at the top, recomputed after every label.
+Measures how often each filter **wrongly rejects** — its **noise** — by having you label **random samples** of its "no" jobs. Opens [`auto-app ui`](#ui--every-interactive-part-in-one-app) on its **Audit** section (F2): **only the Audit tab** — the randomly drawn jobs, nothing else (labelling other jobs here would bias the estimate) — with the **evaluation panel** at the top, recomputed after every label.
 
 ```
  [Audit (8 left of 30)]
@@ -670,6 +709,68 @@ uv run auto-app filter reparse
 
 ---
 
+### `apply` — Step 3: apply to the jobs you queued
+
+Works through your **want to apply** queue (jobs you marked `a` in `job browse`) — design: [`docs/step3-apply.md`](docs/step3-apply.md). Each job's platform (from its apply link: `greenhouse`, `lever`, `ashby`, `workday`, `linkedin_easy_apply`, `other`) picks an **applier chain** from `config/apply.yaml`; appliers are tried in order, and when one can't handle the job (or isn't built yet), the next takes over:
+
+| applier | status | how |
+|---|---|---|
+| `simplify` | ✅ | **hand-off**: opens the apply link in **your Chrome**, where the [Simplify](https://simplify.jobs) extension autofills the form; you check, submit, then press `a` in `apply inbox` |
+| `manual` | ✅ | **hand-off**, always last: opens the apply link and shows your CV in Finder; you apply, then press `a` |
+| `greenhouse`, `lever`, `ashby`, `workday`, `generic` | planned | automated: fill the form from your profile and answers, ask you what they can't answer (A2–A7); until built, chains skip them (recorded as "not built yet") |
+
+LinkedIn Easy Apply is never automated. Nothing is submitted by the app in A1 — you submit every application yourself.
+
+**Your files** (git-ignored; templates committed):
+
+| File | |
+|---|---|
+| `profile/profile.yaml` | name, email, phone, location, links, education, experience, `cv:` path — template `profile.example/profile.yaml` |
+| `profile/answers.yaml` | your **answer bank**: work authorization, sponsorship, start date, relocation, salary, demographics, saved free-text answers (`kind: free_text`, `{company}` / `{title}` filled in) — template `profile.example/answers.yaml`. Used by the automated appliers (A2+) |
+| `profile/cv.pdf` | your CV, uploaded as is |
+| `config/apply.yaml` | the **apply policy**: `workers`, `pace` (per hour / day / company, hours window — for automated submission), `order` (`queued` / `newest_posting`), `appliers` (the chain per platform; `"*"` for any other), `submit` (`review` / `auto` per automated applier), `auto_drafts`, `notify` — template `config/apply.example.yaml`; without it, the template's defaults apply |
+
+#### `apply profile` · `apply policy`
+Check your files. `apply profile`: your name and email, the CV, how many answers are saved, problems (✗ — a missing file, invalid YAML, an answer without `question` / `answer`, the CV not found; exit code 1), and the common answers still missing (you'll be asked when an application needs them). `apply policy`: the effective policy and each platform's chain with ✓ (built) / … (not built yet), and problems: unknown appliers or platforms, a chain not ending in `manual`, LinkedIn Easy Apply with an automated applier.
+
+#### `apply queue`
+The jobs you queued, in the policy's order: number, company, title, platform, chain, and the application's status (`not started`, `handoff (simplify)`, `failed`, …).
+
+#### `apply run`
+Starts an application for each queued job without one, and moves it through its chain to the first applier that can take it — in A1, a **hand-off** waiting in `apply inbox`. Refuses while `apply profile` reports problems. A failed application isn't restarted by `run`: retry it in the inbox.
+
+| Option | |
+|---|---|
+| `-j/--job N` (repeatable) | only these jobs |
+
+#### `apply inbox`
+What needs you in Step 3 — the **Inbox** section (F3) of [`auto-app ui`](#ui--every-interactive-part-in-one-app); `apply inbox` opens the app there. A tab each (`tab` switches; the footer shows only that tab's keys):
+
+| tab | keys |
+|---|---|
+| **Hand-offs** — oldest first | `o` open (Simplify: in your Chrome; manual: the link + your CV) · `a` **applied** (the job becomes `applied`) · `c` **couldn't** (the next applier in the chain takes over) · `l` later (to the back) · `d` drop (the job becomes `not applied`) |
+| **Failed** — every applier tried | `r` retry the chain from the start · `m` apply by hand (manual) · `d` drop |
+| **Done** — submitted or dropped, newest first | `o` open the apply link |
+
+The detail pane shows the job, its apply link, the chain (▸ the current applier) and every attempt with its outcome and reason.
+
+#### `apply list`
+Application history: every application with its job, platform, status (and date, once submitted), applier and number of attempts.
+
+| Option | |
+|---|---|
+| `--status S` | `queued`, `handoff`, `failed`, `submitted` or `dropped` |
+
+```bash
+uv run auto-app apply queue
+uv run auto-app apply run
+uv run auto-app apply run --job 28
+uv run auto-app apply inbox
+uv run auto-app apply list --status submitted
+```
+
+---
+
 ### `data` — storage
 
 #### `data inspect [SOURCE [JOB_ID]]`
@@ -735,7 +836,7 @@ Everything lives in `data/` in the project directory (git-ignored):
 
 ```
 data/auto_app.db                      the database: postings (raw, parsed, normalized), jobs and their state,
-                                      archived jobs (training data), Step 2 judgments, your decisions and labels, audit samples,
+                                      archived jobs (training data), Step 2 judgments, your decisions and labels, audit samples, Step 3 applications and their attempts,
                                       batches, search runs, sightings, source health, aliases
 data/logs/<batch_id>.log              run logs (scheduled runs: data/logs/scheduled.log)
 data/screenshots/<source>/<id>.png    only with --screenshots / probe
@@ -745,6 +846,8 @@ data/export/                          `auto-app data export` output
 browser-profiles/<source>/            saved logins
 .env                                  global settings and the API key (template: .env.example)
 filters/<name>/                       your Step 2 filters (command.md, filter.yaml, …); examples in filters.example/
+profile/                              Step 3: profile.yaml, answers.yaml, cv.pdf; templates in profile.example/
+config/apply.yaml                     Step 3: the apply policy (template config/apply.example.yaml)
 ```
 
 ## Safety

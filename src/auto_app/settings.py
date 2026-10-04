@@ -44,6 +44,15 @@ class Paths:
     def profile(self, source: str) -> Path:
         return self.profiles / source
 
+    @property
+    def me(self) -> Path:
+        """Step 3: your profile.yaml, answers.yaml and CV (git-ignored; templates in profile.example/)."""
+        return self.home / "profile"
+
+    @property
+    def apply_policy(self) -> Path:
+        return self.home / "config" / "apply.yaml"
+
 
 def get_paths() -> Paths:
     home = os.environ.get("AUTO_APP_HOME")

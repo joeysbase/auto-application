@@ -263,3 +263,34 @@ audit_items = Table(  # the jobs in a draw; labeled once a feedback row exists f
     Column("job_id", Integer, primary_key=True),  # no FK: kept with the labels
     Column("filter", String, nullable=False, index=True),
 )
+
+applications = Table(  # Step 3: one application per queued job (docs/step3-apply.md §8)
+    "applications", metadata,
+    Column("application_id", Integer, primary_key=True, autoincrement=True),
+    Column("job_id", Integer, nullable=False, index=True),  # no FK: the record outlives the job (TTL)
+    Column("platform", String, nullable=False),  # greenhouse | lever | ashby | workday | linkedin_easy_apply | other
+    Column("apply_url", Text),
+    Column("status", String, nullable=False, index=True),  # queued | handoff | needs_input | action_needed | ready |
+                                                           # submitting | submitted | failed | dropped
+    Column("chain", JSON, nullable=False),  # the applier chain from the policy, e.g. ["greenhouse", "simplify", "manual"]
+    Column("chain_pos", Integer, nullable=False, default=0),  # the applier now in charge
+    Column("applier", String),  # its name (or the one that submitted)
+    Column("note", Text),
+    Column("created_at", Ts, nullable=False),
+    Column("updated_at", Ts, nullable=False),
+    Column("submitted_at", Ts),
+    Column("confirmation_path", Text),
+)
+
+attempts = Table(  # every applier's try on an application, with its outcome (§3)
+    "attempts", metadata,
+    Column("attempt_id", Integer, primary_key=True, autoincrement=True),
+    Column("application_id", Integer, ForeignKey("applications.application_id"), nullable=False, index=True),
+    Column("applier", String, nullable=False),
+    Column("pass", String, nullable=False),  # prepare | submit | handoff
+    Column("outcome", String, nullable=False),  # ready | needs_input | action_needed | unsupported | failed | submitted | handoff
+    Column("reason", Text),
+    Column("screenshot_path", Text),
+    Column("started_at", Ts, nullable=False),
+    Column("ended_at", Ts),
+)

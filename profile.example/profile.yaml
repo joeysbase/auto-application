@@ -1,0 +1,18 @@
+# Your profile for Step 3 (docs/step3-apply.md §2). Copy this folder:  cp -r profile.example profile
+# then fill it in. profile/ is git-ignored. Check it with:  uv run auto-app apply profile
+name:
+  first: Alex
+  last: Doe
+  preferred: Alex
+email: alex@example.com
+phone: "+1 555 0100"
+location: { city: Boston, state: MA, country: United States }
+links:
+  linkedin: https://www.linkedin.com/in/alex-doe
+  github: https://github.com/alexdoe
+  portfolio: https://alexdoe.dev
+education:
+  - { school: Northeastern University, degree: "M.S. Computer Science", start: 2024-09, end: 2026-05 }
+experience:
+  - { company: Acme, title: ML Engineer Intern, start: 2025-05, end: 2025-08, location: "Boston, MA" }
+cv: profile/cv.pdf               # your CV, uploaded as is (put the PDF there)

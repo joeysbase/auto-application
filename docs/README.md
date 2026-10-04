@@ -6,7 +6,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
 |---|---|---|---|
 | 1 | [step1-collect.md](step1-collect.md) | *What jobs are out there?* Collect postings from job sites and company career sites, store them, and turn them into one clean, deduplicated list of jobs | Raw collection working for LinkedIn; plugins, parse, DB, dedup designed |
 | 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | S1–S3 implemented (filters, agent judgment, review in `job browse`); preference model open |
-| 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Several applications at a time: per-platform applier chains with fallback (Simplify hand-off first; Greenhouse, Lever, Ashby later), answers from your profile and answer bank, a needs-input queue for what only you can answer, review or auto-submit | Designed (2026-10-04) |
+| 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Several applications at a time: per-platform applier chains with fallback (Simplify hand-off first; Greenhouse, Lever, Ashby later), answers from your profile and answer bank, a needs-input queue for what only you can answer, review or auto-submit | A1 implemented (Simplify hand-off + manual, `apply inbox`); A2–A7 designed |
 
 Implementation progress, one entry per feature: [updates/](updates/README.md).
 

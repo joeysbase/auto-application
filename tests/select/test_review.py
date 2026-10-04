@@ -5,12 +5,13 @@ import shutil
 import pytest
 from typer.testing import CliRunner
 
+from tests.ui_helpers import ui_app
 from auto_app.core.config import AppConfig, JobTTL
 from auto_app.core.db.job_ttl import apply_job_ttl
 from auto_app.core.db.store import DbStore
 from auto_app.select.engine import SelectOptions, run_select
 from auto_app.select.filters import EXAMPLES_DIR, load_filter
-from auto_app.process.job_browser import JobBrowser, JobBrowserApp
+from auto_app.process.job_browser import JobBrowser
 from auto_app.select.review import Review
 from auto_app.select.runner import api_runner
 from auto_app.settings import Paths
@@ -135,34 +136,35 @@ def test_label_upserts_per_filter_with_version_and_undo_restores(env):
 async def test_app_keys(env):
     db, rv, jobs, _ = env
     opened = []
-    app = JobBrowserApp(rv, open_url=opened.append, start="recommended", dark=lambda: False)
+    app = ui_app(rv, open_url=opened.append, start="recommended", dark=lambda: False)
     async with app.run_test(size=(160, 40)) as pilot:
-        assert ids(app.rows) == {jobs["ml"], jobs["analyst"]}
-        while app.current()["job_id"] != jobs["ml"]:
+        s = app.screen
+        assert ids(s.rows) == {jobs["ml"], jobs["analyst"]}
+        while s.current()["job_id"] != jobs["ml"]:
             await pilot.press("down")
-        assert "strong ML fit" in str(app.query_one("#detail").render())
+        assert "strong ML fit" in str(s.query_one("#detail").render())
         await pilot.press("g")  # a good job for filter 1 (ml, which recommended it)
         await pilot.press("2", "b")  # a bad job for filter 2 (research, which said no)
         fb = db.feedback_of(jobs["ml"])
         assert (fb["ml"]["label"], fb["research"]["label"]) == (True, False)
         assert (fb["ml"]["correct"], fb["research"]["correct"]) == (True, True)
-        assert "you: 👍 should recommend → it was right" in str(app.query_one("#detail").render())
+        assert "you: 👍 should recommend → it was right" in str(s.query_one("#detail").render())
         await pilot.press("o")
         assert opened and "JR1" in opened[0]
-        app.query_one("DataTable").move_cursor(row=[j["job_id"] for j in app.rows].index(jobs["ml"]))
+        s.query_one("DataTable").move_cursor(row=[j["job_id"] for j in s.rows].index(jobs["ml"]))
         await pilot.press("a")
         assert db.job(jobs["ml"])["decision"] == "want_to_apply"
-        assert jobs["ml"] in [j["job_id"] for j in app.rows]  # stays listed with ★ this session
+        assert jobs["ml"] in [j["job_id"] for j in s.rows]  # stays listed with ★ this session
         await pilot.press("u")
         assert db.job(jobs["ml"])["decision"] is None
         await pilot.press("slash", *"acme", "enter")
-        assert [j["job_id"] for j in app.rows] == [jobs["analyst"]]
+        assert [j["job_id"] for j in s.rows] == [jobs["analyst"]]
         await pilot.press("n", "r", *"no", "enter")
         assert db.job(jobs["analyst"])["decision"] == "not_applied" and db.reviews(jobs["analyst"])[0]["reason"] == "no"
         await pilot.press("escape", "tab")
-        assert app.kind == "un_recommended" and [j["job_id"] for j in app.rows] == [jobs["sales"]]
+        assert s.kind == "un_recommended" and [j["job_id"] for j in s.rows] == [jobs["sales"]]
         await pilot.press("tab")
-        assert app.kind == "want_to_apply" and app.rows == []
+        assert s.kind == "want_to_apply" and s.rows == []
         await pilot.press("q")
 
 
@@ -188,7 +190,7 @@ async def test_theme_follows_the_system_or_stays_fixed(env):
 
     _, rv, _, _ = env
     mode = {"dark": False}
-    app = JobBrowserApp(rv, dark=lambda: mode["dark"])
+    app = ui_app(rv, dark=lambda: mode["dark"])
     async with app.run_test() as pilot:
         assert app.theme == "textual-light"
         mode["dark"] = True
@@ -198,7 +200,7 @@ async def test_theme_follows_the_system_or_stays_fixed(env):
         app.follow_system()
         assert app.theme == "nord"
         await pilot.press("q")
-    fixed = JobBrowserApp(rv, ui=UiConfig(theme="solarized-light"), dark=lambda: True)
+    fixed = ui_app(rv, ui=UiConfig(theme="solarized-light"), dark=lambda: True)
     async with fixed.run_test() as pilot:
         assert fixed.theme == "solarized-light"
         await pilot.press("q")
