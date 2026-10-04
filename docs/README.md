@@ -65,12 +65,12 @@ Implemented in C11 (Step 1): the two fields, the TTL and archiving below; `want_
 
 | State | Default TTL | After the TTL |
 |---|---|---|
-| not evaluated | 14 days | **deleted** with every linked posting |
-| un_recommended | 7 days | **deleted** with every linked posting |
-| recommended (undecided, applied, not applied) | 30 days | **archived**: kept as a compact record, excluded from dedup |
+| not evaluated | 14 days | **deleted** with every linked posting (never judged — not training data) |
+| un_recommended | 7 days | **archived** |
+| recommended (undecided, applied, not applied) | 30 days | **archived** |
 | **want to apply** | **none** — never expires while queued | stays until Step 3 applies (→ applied) or you withdraw it (→ not applied); Step 3 tells you if its posting has gone |
 
-Archived jobs keep the summary, Step 2 result, your decision, posting identity, matching keys and — for applied jobs — the description; a new posting that looks like an archived applied / declined job becomes a new job **with a warning** ("looks like job #12, which you applied to on …").
+**Archived jobs are training data** (planned, Step 2 S4 — today un_recommended jobs are deleted): every **judged** job (recommended or un_recommended) is archived after its TTL, never deleted; jobs never judged are deleted, as they aren't training data. An archived job keeps what a filter reads (title, company, locations, description, …), its Step 2 verdicts, your labels and decision, and its matching keys; only raw captures are dropped. Archived jobs leave the active pool: hidden from `job list` / `job browse`'s active tabs, never judged again, and **never merged with active jobs**. Among themselves they **are deduplicated** (when a job is archived), so the training data holds each job once. A listing seen again after its job was archived is collected as a **new job** (judged again); one that looks like an archived job you applied to / declined gets a warning ("looks like job #12, which you applied to on …").
 
 ## 4. Tech stack
 

@@ -496,10 +496,11 @@ A shared employer job key overrides the vetoes (it is the same job id on the emp
 `dedup --preview` runs the same plan without writing. `dedup --rebuild` unlinks everything and regroups from scratch — refused once any job has been evaluated by Step 2 (C11; today: once any status is beyond `collected`), so Step 2/3 decisions are never lost. `auto-app job list` lists jobs; `auto-app job list <id>` shows a job's postings (and how each was linked), keys and locations; `inspect <source> <id>` shows a posting's job.
 
 ### 7.5 Reposts, history and archived jobs
-- Same ID → `known`, not re-fetched (optional: refresh when marked "Reposted" and last fetched > 14 days ago). This also holds for postings of **archived** jobs: the listing is not fetched again and the archived job **stays archived** (its posting's last-seen date is updated; the job is not revived).
+- Same ID → `known`, not re-fetched (optional: refresh when marked "Reposted" and last fetched > 14 days ago). Today this also holds for postings of **archived** jobs (the listing is skipped; the job stays archived). **Planned (Step 2 S4):** a listing whose job was archived is collected again as a **new job** and goes through Step 2 again — the archived job stays as it is (training data); the posting identity is freed when its job is archived, so the same listing can exist once active and in archived records.
 - New ID → fetched once, then Level 1b or 2 attaches it to the matching **active** job, which keeps its state.
 - **Archived jobs are excluded from linking** (Level 1b and Level 2). A new posting that would have matched one becomes a **new job** (and goes through Step 2 again) — but dedup still **checks** new jobs against archived jobs' kept matching keys (employer key, company + req id, description hash, company + title) and attaches a warning to the new job: *"looks like job #12, which you applied to on 2026-10-03"* / *"… which you declined on …"*. Steps 2–3 show the warning.
-- Deleted jobs (TTL, §9) leave nothing behind: a listing seen again later is collected and evaluated as new.
+- Deleted jobs (TTL, §9 — planned: only jobs never judged) leave nothing behind: a listing seen again later is collected and evaluated as new.
+- **Dedup within the archive (planned, Step 2 S4).** Active and archived jobs never merge. But when a job is **archived**, it's compared with the archived jobs using the Level 2 rules and vetoes (§7.3, a different title is a different job). A match is **linked** to that archived job (`duplicate_of`), not merged — nothing is lost, and it can be undone. A linked group is **one example** for training and evaluation: per filter, your most recent label counts (preferences drift), and the whole group falls on one side of a time-based train / test split, so a copy of a test job never leaks into training.
 - Whether reposts are wanted is a Step 2 matter: write it in your Step 2 filter's command ("skip reposted jobs") and add `reposted` to its `filter.yaml` `job_details`.
 
 ### 7.6 Rollout and calibration
@@ -588,18 +589,27 @@ AUTO_APP_JOBS__TTL_DAYS__RECOMMENDED=30       # undecided, applied or not applie
 
 | State (README §3) | After its TTL |
 |---|---|
-| not evaluated, un_recommended | **deleted**: the job, its `job_keys`, `job_locations`, and **every linked posting** (incl. Level 1b duplicates) with its raw data and screenshot — in one transaction |
+| not evaluated | **deleted**: the job, its `job_keys`, `job_locations`, and **every linked posting** (incl. Level 1b duplicates) with its raw data and screenshot — in one transaction. Never judged, so not training data |
+| un_recommended | today: **deleted** like not evaluated — **planned (Step 2 S4): archived** (9.2), because judged jobs are training data |
 | recommended (undecided, applied, not applied) | **archived** (9.2) |
 | want to apply (queued for Step 3) | **never expires while queued**; follows the recommended TTL once applied or withdrawn |
 
 - `expires_at` (= `last_seen_at` + the state's TTL) is kept on every active job; `auto-app job list` shows "in N d" (`due` = the next purge acts on it) and flags recommended-undecided jobs (`!`) 3 days before they're archived.
 - `auto-app job mark JOB… --as STATE` (or `m` in `auto-app job browse`) sets the state by hand; a decision (`want_to_apply` / `applied` / `not_applied`) keeps Step 2's verdict, or marks the job recommended if it has none.
 - `dedup` only refreshes `last_seen_at` / `expires_at`; deleting and archiving happen in `purge`, and `purge --dry-run` lists the jobs it would delete or archive.
+- **Known bug (found 2026-10-04, fixed in Step 2 S4):** deleting an un_recommended job that Step 2 judged fails on the `judgments` foreign key, so `data purge` stops (nothing is deleted). Fixed by the planned change above: judged jobs are archived, never deleted ([step2 §7.8](step2-select.md)).
 - Caveat: "not seen" isn't always "closed". Company sources with `posted_within_days: all` re-list every open job each run; LinkedIn searches only show recent postings and stop early, so a still-open LinkedIn job can stop being seen and expire.
 
 ### 9.2 Archived jobs
 
-An archived job is a **record**: kept, hidden from `auto-app job list` by default (`--archived` lists them), and **excluded from dedup** (§7.5). Only what's needed is kept (≈ 1 KB per job; a few KB with a description):
+An archived job is a **record**: kept, hidden from `auto-app job list` by default (`--archived` lists them), and **never merged with active jobs** (§7.5).
+
+**Planned (Step 2 S4) — archived jobs are training data** for the preference model and for evaluation ([step2 §7.8](step2-select.md)), so:
+- Every expired **judged** job is archived — un_recommended too; judged jobs are never deleted. Jobs **never judged** by Step 2 are still deleted (§9.1): they aren't training data. Optional cleanup of archived jobs for disk or privacy: `AUTO_APP_JOBS__KEEP_DAYS` (default: forever).
+- An archived job keeps **what a filter reads** — title, company, locations, workplace / employment type, salary, posted / reposted, **description** (compressed) — plus its Step 2 judgments, your feedback and decision, and its matching keys. Only raw captures (pages, records, JSON, screenshots, card data) are dropped. ≈ 3 KB per job (measured: ~7.5 KB of parsed data per posting before compression) — ~30 MB per 10,000 jobs.
+- **Deduplicated within the archive** (§7.5): the archive holds each job once.
+
+Today (C11) only what's below is kept (≈ 1 KB per job; a few KB with a description):
 
 | Kept | Dropped |
 |---|---|
@@ -699,5 +709,5 @@ auto-app source new-plugin <name> --kind api|browser
 2. API local filter: keyword match on title only, or title + description?
 3. Reopened roles: a job you applied to reappearing after > 90 days — stay attached or surface as new?
 4. Refresh "Reposted" LinkedIn jobs after 14 days?
-6. Archived job whose same listing (same source id) is seen again: stays archived (decided default, §7.5) — revisit if it hides reopened roles.
+6. Archived job whose same listing (same source id) is seen again: today it stays archived; **decided 2026-10-04 (Step 2 S4): collected as a new job** and judged again, while the archived job stays as training data (§7.5).
 5. Handshake: verify live, or drop for now (LinkedIn-only focus)?
