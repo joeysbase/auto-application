@@ -608,6 +608,7 @@ def _select(
     directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
     config: ConfigOpt = None,
     out: OutOpt = None,
+    jobs: list[int] | None = None,
 ):
     """Step 2: run your filters' agents on active, undecided jobs and mark them recommended / un_recommended."""
     from auto_app.select.engine import SelectOptions, reparse as do_reparse, run_select
@@ -622,8 +623,25 @@ def _select(
         if changes:
             typer.echo(f"\n{len(changes)} judgments {'would change' if dry_run else 'changed'}")
         return
-    opts = SelectOptions(filters=filter_, limit=limit, rescore=rescore, max_cost=max_cost,
+    opts = SelectOptions(filters=filter_, jobs=jobs, limit=limit, rescore=rescore, max_cost=max_cost,
                          parallel=parallel or cfg.select.parallel, dry_run=dry_run)
+    if jobs:
+        from auto_app.select.engine import applies
+
+        scopes = store.job_scopes()
+        for job_id in jobs:
+            j = store.job(job_id)
+            if not j:
+                typer.echo(f"job #{job_id}: no such job", err=True)
+            elif j.get("archived_at"):
+                typer.echo(f"job #{job_id}: archived — not judged", err=True)
+            else:
+                skipped = [f.name for f in chosen if not applies(f, scopes.get(job_id, set()))]
+                if skipped:
+                    typer.echo(f"job #{job_id}: not in the applies_to of {skipped}", err=True)
+                if j.get("decision"):
+                    typer.echo(f"job #{job_id}: you already decided ({j['decision']}) — judged for `filter why`, "
+                               f"its state won't change", err=True)
     import os
     import shutil
 
@@ -686,8 +704,9 @@ def _select(
     rep = run_select(store, cfg, chosen, runner, opts, progress=typer.echo)
     jobs = len({j for j, _ in rep.planned})
     if not rep.planned:
-        typer.echo("nothing to judge: every active, undecided job has been judged by the current filters"
-                   + ("" if rescore else " (use --rescore to redo older versions)"))
+        typer.echo("nothing to judge" + (" for those jobs" if jobs else
+                   ": every active, undecided job has been judged by the current filters"
+                   + ("" if rescore else " (use --rescore to redo older versions)")))
         return
     if dry_run:
         typer.echo(f"would run {len(rep.planned)} judgments on {jobs} jobs:")
@@ -1099,6 +1118,7 @@ def filter_show(
 @filter_app.command("run")
 def filter_run(
     filter_: Annotated[Optional[list[str]], typer.Option("--filter", "-f", help="Only these filters (repeatable); default: all")] = None,
+    job: Annotated[Optional[list[int]], typer.Option("--job", "-j", help="Only these jobs (repeatable), judged again even if already judged")] = None,
     limit: Annotated[Optional[int], typer.Option(help="At most N jobs (newest first)")] = None,
     rescore: Annotated[bool, typer.Option(help="Also re-judge jobs judged by an older version of a filter")] = False,
     max_cost: Annotated[Optional[float], typer.Option("--max-cost", help="Stop starting new runs after this many USD")] = None,
@@ -1108,8 +1128,8 @@ def filter_run(
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
-    """Run your filters' agents on active, undecided jobs and mark them recommended / un_recommended."""
-    _select(filter_, limit, rescore, max_cost, parallel, dry_run, False, directory, config, out)
+    """Run your filters' agents on active, undecided jobs (or the --job ones) and mark them recommended / un_recommended."""
+    _select(filter_, limit, rescore, max_cost, parallel, dry_run, False, directory, config, out, jobs=job)
 
 
 @filter_app.command("reparse")

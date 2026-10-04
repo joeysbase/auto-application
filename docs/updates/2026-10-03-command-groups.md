@@ -47,3 +47,6 @@ auto-app data      inspect · export · import · purge
   - `README.md`: Contents, a command tree, common workflows (with a Step 2 one), and the reference regrouped into one section per group. Every `auto-app …` command written in the README was checked against `--help` (27 commands).
   - `docs/step1-collect.md` §10, `docs/step2-select.md` §10, `docs/step3-apply.md` §8, `docs/README.md`.
 - Earlier progress entries keep the names they had at the time.
+
+## Added: `filter run --job N`
+`-j/--job N` (repeatable) judges exactly those jobs. They're judged again even if already judged by the current version, since you named them, and the new judgment replaces the old one. A job you already decided on is judged too (readable with `filter why`), but its state never changes. Each filter's `applies_to` still applies, and `filter run` says when a named job isn't covered, doesn't exist, or is archived. Test: `test_job_option_judges_exactly_those_jobs_again`.

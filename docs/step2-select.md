@@ -260,7 +260,7 @@ Step 2 sets `jobs.step2` / `step2_at`; review sets `jobs.decision` / `decided_at
 ```
 auto-app filter list [--dir PATH]                                 # your filters: version, model, tools, problems (S1 ✅)
 auto-app filter show <NAME> [--job N] [--dir PATH]                # one filter; --job: exactly what the agent gets (S1 ✅)
-auto-app filter run [-f NAME]… [--limit N] [--rescore] [--max-cost USD] [--parallel N] [--dry-run]   # judge jobs (S2 ✅)
+auto-app filter run [-f NAME]… [-j JOB]… [--limit N] [--rescore] [--max-cost USD] [--parallel N] [--dry-run]   # judge jobs (S2 ✅)
 auto-app filter why <JOB_ID> [--trace]                            # each filter's answer, lookups, cost, version (S2 ✅)
 auto-app filter reparse [-f NAME]… [--dry-run]                    # re-read stored answers with the current parsers (S2 ✅)
 auto-app filter review [-f NAME]                                  # decide on recommended jobs (S3, planned)

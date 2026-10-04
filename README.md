@@ -479,6 +479,7 @@ Every answer is stored with the trace (each lookup), tokens, tool calls and cost
 | Option | |
 |---|---|
 | `-f/--filter NAME` (repeatable) | only these filters |
+| `-j/--job N` (repeatable) | only these jobs — judged again even if already judged; a job you already decided on is judged too (see `filter why`), but its state doesn't change; each filter's `applies_to` still applies |
 | `--limit N` | at most N jobs, newest first |
 | `--rescore` | also re-judge jobs judged by an older version of a filter |
 | `--max-cost USD` | stop starting new runs once this much was spent (runs already going finish). With the `api` runner it needs prices for the filters' models in `AUTO_APP_SELECT__PRICES`; with `claude-cli` it uses Claude Code's reported cost |
@@ -498,6 +499,7 @@ Every answer is stored with the trace (each lookup), tokens, tool calls and cost
 uv run auto-app filter run --dry-run --limit 30
 uv run auto-app filter run --limit 30 --max-cost 2      # a first trial
 uv run auto-app filter run -f ml-engineer --rescore      # after editing that filter's command
+uv run auto-app filter run --job 28                      # just job 28 (again, if already judged)
 ```
 Output: one line per judgment (`#28 ml-engineer recommend — reason`), then totals: recommend / no / couldn't read / errors, how many jobs are now recommended or un_recommended, tokens and cost.
 

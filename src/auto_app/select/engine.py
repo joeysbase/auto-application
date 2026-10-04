@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class SelectOptions:
     filters: list[str] | None = None  # None = every loaded filter
+    jobs: list[int] | None = None  # only these jobs — judged again even if already judged (decided ones too,
+    #                                but their state never changes)
     limit: int | None = None  # at most this many jobs (newest first)
     rescore: bool = False  # also re-judge pairs judged with an older filter version
     max_cost: float | None = None  # stop starting new runs once this much (USD) has been spent
@@ -62,8 +64,11 @@ def plan(store, filters: list[Filter], opts: SelectOptions) -> list[tuple[int, F
     for r in store.judgment_rows():
         done.setdefault((r["job_id"], r["filter"]), {})[r["filter_version"]] = r["status"]
     pairs, picked_jobs = [], []
+    if opts.jobs is not None:
+        wanted = set(opts.jobs)
+        jobs = [j for j in jobs if j["job_id"] in wanted]
     for j in jobs:
-        if j.get("decision"):
+        if j.get("decision") and opts.jobs is None:
             continue
         job_pairs = []
         for flt in filters:
@@ -71,7 +76,7 @@ def plan(store, filters: list[Filter], opts: SelectOptions) -> list[tuple[int, F
                 continue
             versions = done.get((j["job_id"], flt.name), {})
             status = versions.get(flt.version)
-            if status == "error" or (status is None and (not versions or opts.rescore)):
+            if opts.jobs is not None or status == "error" or (status is None and (not versions or opts.rescore)):
                 job_pairs.append((j["job_id"], flt))
         if job_pairs:
             if opts.limit and len(picked_jobs) >= opts.limit:

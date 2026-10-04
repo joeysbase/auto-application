@@ -151,3 +151,17 @@ def test_cli_select_and_why(env, tmp_path, monkeypatch):
     run_select(db, CFG, [load_filter(folder / "ml")], api_runner(FakeClient(by_title)), SelectOptions())
     r = CliRunner().invoke(cli.app, ["filter", "why", str(jobs["analyst"]), "--dir", str(folder)])
     assert r.exit_code == 0 and "couldn't read" in r.output and "(current)" in r.output and "analyst role" in r.output
+
+
+def test_job_option_judges_exactly_those_jobs_again(env):
+    db, folder, jobs = env
+    flt = load_filter(folder / "ml")
+    run_select(db, CFG, [flt], api_runner(FakeClient(by_title)), SelectOptions())
+    db.set_job_state(jobs["sales"], step2="recommended", decision="not_applied")
+    client = FakeClient(lambda kw: answer(True, "second look"))
+    rep = run_select(db, CFG, [flt], api_runner(client), SelectOptions(jobs=[jobs["ml"], jobs["sales"]]))
+    assert sorted(j for j, _ in rep.planned) == sorted([jobs["ml"], jobs["sales"]])  # already judged, run again
+    assert len(client.calls) == 2 and jobs["analyst"] not in {j for j, _ in rep.planned}
+    [row] = db.judgment_rows(job_id=jobs["ml"])
+    assert row["reason"] == "second look"  # replaced the earlier judgment of the same version
+    assert db.job(jobs["sales"])["decision"] == "not_applied"  # judged, but your decision stands
