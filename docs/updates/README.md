@@ -9,6 +9,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-04 | Agent answers **fit + dealbreaker** (recommend = fit and no dealbreaker; older answers still read); evaluation by cause; preference model deferred | 2 | ✅ done | [2026-10-04-fit-dealbreaker](2026-10-04-fit-dealbreaker.md) |
 | 2026-10-04 | Step 2 S4: judged jobs archived as training data (purge bug fixed; dedup within the archive; re-seen listing = new job), good / bad labels, `filter audit` (Audit tab + live evaluation panel), `filter eval` | 1–2 | ✅ done | [2026-10-04-s4-audit-eval](2026-10-04-s4-audit-eval.md) |
 | 2026-10-04 | Design: evaluation + audit (interactive, live eval panel), the label and its bias, preference model data plan; judged jobs = training data (archived, never deleted; dedup within the archive); model as a second judge with shadow mode; un-recommended as training data only below the noise limit; purge bug found | 2 | 📐 designed | [2026-10-04-eval-audit-design](2026-10-04-eval-audit-design.md) |
 | 2026-10-04 | `filter run` progress: `[n/N]` per judgment; live bar (done, cost, time left, running jobs) in a terminal | 2 | ✅ done | [2026-10-04-filter-run-progress](2026-10-04-filter-run-progress.md) |
@@ -57,7 +58,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 | Feature | Step | Design |
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
-| Step 2 S5: preference model per filter (second judge, shadow mode, batch retraining + drift check, noise-gated weak negatives) | 2 | [step2 §7.5–7.6](../step2-select.md) |
+| Step 2 S5 (deferred — evaluation decides): preference model, fit only, dealbreaker veto | 2 | [step2 §7.5–7.6](../step2-select.md) |
 | Step 3: want-to-apply queue policy, then tailoring and submission | 3 | [step3 §0](../step3-apply.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).

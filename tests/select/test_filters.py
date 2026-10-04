@@ -10,7 +10,8 @@ from auto_app.select.filters import EXAMPLES_DIR, FilterError, load_filter, load
 from auto_app.select.job_details import build_job_details, clean_text
 from auto_app.sources.registry import load_registry
 
-GOOD_CMD = "---\ndescription: test filter\n---\nJudge this job.\n\n$ARGUMENTS\n\nEnd with {\"recommend\": true|false, \"reason\": \"…\"}\n"
+GOOD_CMD = ("---\ndescription: test filter\n---\nJudge this job.\n\n$ARGUMENTS\n\n"
+            "End with {\"fit\": true|false, \"dealbreaker\": true|false, \"reason\": \"…\"}\n")
 
 
 def make(tmp_path, name="f", command=GOOD_CMD, yaml="model: claude-haiku-4-5-20251001\n", **files):
@@ -31,7 +32,8 @@ def test_examples_load_cleanly():
     ml, vf = fs.filters["ml-engineer"], fs.filters["verdict-format"]
     assert ml.uses_convention and not ml.warnings and list(ml.files) == ["sponsorship-notes.md"]
     assert ml.config.tools == ["web_search", "web_fetch"] and ml.description.startswith("Screen ML")
-    assert not vf.uses_convention and vf.parser("Verdict: maybe\nReason: close fit") == {"recommend": True, "reason": "close fit"}
+    assert not vf.uses_convention
+    assert vf.parser("Verdict: maybe\nReason: close fit") == {"fit": True, "dealbreaker": None, "reason": "close fit"}
     with pytest.raises(ValueError):
         vf.parser("no verdict here")
 
@@ -71,6 +73,9 @@ def test_warnings_for_a_missing_convention_or_arguments(tmp_path):
     assert render(f, "JOB") == "Judge this job and say yes or no.\n\nJOB"  # appended when $ARGUMENTS is missing
     g = load_filter(make(tmp_path, name="g"))
     assert g.warnings == [] and "JOB" in render(g, "JOB") and "$ARGUMENTS" not in render(g, "JOB")
+    old = load_filter(make(tmp_path, name="old", command="$ARGUMENTS\nEnd with {\"recommend\": true|false}"))
+    [w] = old.warnings  # still works, but asked to move to fit + dealbreaker
+    assert "older" in w and '"dealbreaker"' in w and old.uses_convention
 
 
 def test_version_covers_what_the_agent_sees_but_not_parser_or_applies_to(tmp_path):
@@ -150,5 +155,5 @@ def test_filters_command_lists_checks_and_previews(tmp_path, monkeypatch):
     r = CliRunner().invoke(app, ["filter", "show", "ml-engineer", "--dir", str(folder), "--job", str(job_of(db, "nvidia/JR1"))])
     assert r.exit_code == 0, r.output
     assert "## The job\n<job_posting>" in r.output and "Title: ML Engineer" in r.output and "Company: NVIDIA" in r.output
-    assert "Locations: Santa Clara, CA" in r.output and r.output.rstrip().endswith("deal-breaker you found\"}")
+    assert "Locations: Santa Clara, CA" in r.output and r.output.rstrip().endswith("if unsure, false.")
     assert CliRunner().invoke(app, ["filter", "show", "ml-engineer", "--dir", str(folder), "--job", "999"]).exit_code == 1

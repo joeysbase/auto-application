@@ -8,6 +8,8 @@ Per filter:
 - missed in all ≈ noise × the number of jobs it said no to;
 - recall ≈ right picks ÷ (right picks + missed in all), right picks ≈ precision × picks;
 - review load — picks ÷ judged;
+- by cause — its "no"s split into dealbreaker rejections and "doesn't fit" ones, with the audited misses of each:
+  a wrong dealbreaker call hides a job however well it fits;
 - training data — whether its unlabelled "no" jobs may train its preference model: yes when the noise's one-sided
   95% exact (Clopper–Pearson) upper bound is under the limit; if not, how many more clean audits would get there.
 
@@ -18,7 +20,7 @@ bound (study.md has the worked example). Nothing is cached: every call reads the
 import math
 from dataclasses import dataclass
 
-from auto_app.select.audit import labels, latest_verdicts, sampled
+from auto_app.select.audit import labels, latest_dealbreakers, latest_verdicts, sampled
 
 Z = 1.959964  # 95%
 
@@ -108,6 +110,9 @@ class FilterEval:
     noise: Rate  # good of your labels on its audited "no" jobs
     audited_open: int  # sampled but not yet labelled
     limit: float
+    no_dealbreaker: int = 0  # of its "no"s, those with a dealbreaker
+    noise_dealbreaker: Rate | None = None  # misses among audited dealbreaker rejections
+    noise_fit: Rate | None = None  # … among audited "doesn't fit" rejections
 
     @property
     def review_load(self) -> float | None:
@@ -156,6 +161,12 @@ class FilterEval:
         else:
             out.append("  noise          —                no audited \"no\" jobs labelled yet"
                        + (f" ({self.audited_open} waiting)" if self.audited_open else " — run `filter audit`"))
+        if self.no_dealbreaker:
+            nd, nf = self.noise_dealbreaker, self.noise_fit
+            out.append(f"  by cause       dealbreaker: {self.no_dealbreaker} said no, {nd.n} audited, {nd.k} missed"
+                       + (f" ({nd.fmt()})" if nd.n else "")
+                       + f" · doesn't fit: {self.no - self.no_dealbreaker} said no, {nf.n} audited, {nf.k} missed"
+                       + (f" ({nf.fmt()})" if nf.n else ""))
         r = self.recall()
         if r is not None:
             out.append(f"  recall         ≈{r:.0%} ({self.recall('lo'):.0%}–{self.recall('hi'):.0%})")
@@ -176,6 +187,7 @@ class FilterEval:
 def evaluate(store, filters: list[str] | None, limit: float, version: str | None = None) -> list[FilterEval]:
     """filters: names to evaluate (None: every filter that has judged a job). version: one filter version only."""
     verdicts = latest_verdicts(store, version=version)
+    breakers = latest_dealbreakers(store, version=version)
     have = labels(store)
     items = sampled(store)
     draw_version: dict[int, str | None] = {}
@@ -194,10 +206,15 @@ def evaluate(store, filters: list[str] | None, limit: float, version: str | None
         lab_picks = [have[(j, name)] for j in picks if (j, name) in have]
         audited = [j for (j, f), d in items.items() if f == name and (not version or draw_version.get(d) == version)]
         lab_audit = [have[(j, name)] for j in audited if (j, name) in have]
+        db = {j for j in nos if breakers.get((j, name))}
+        lab_db = [have[(j, name)] for j in audited if (j, name) in have and j in db]
+        lab_fit = [have[(j, name)] for j in audited if (j, name) in have and j not in db]
         out.append(FilterEval(
             filter=name, version=version, judged=len(mine), picks=len(picks), no=len(nos),
             precision=Rate(sum(lab_picks), len(lab_picks)), noise=Rate(sum(lab_audit), len(lab_audit)),
-            audited_open=sum(1 for j in audited if (j, name) not in have), limit=limit))
+            audited_open=sum(1 for j in audited if (j, name) not in have), limit=limit,
+            no_dealbreaker=len(db), noise_dealbreaker=Rate(sum(lab_db), len(lab_db)),
+            noise_fit=Rate(sum(lab_fit), len(lab_fit))))
     return out
 
 

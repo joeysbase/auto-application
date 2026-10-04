@@ -526,15 +526,15 @@ mkdir -p filters && cp -r filters.example/ml-engineer filters/
 
 | File | |
 |---|---|
-| `command.md` (required) | the prompt run for **every** job, in your own words: background, what you want, deal-breakers, when to recommend. `$ARGUMENTS` marks where the job details go (appended at the end if missing). Optional front matter: `description` only. Unless the filter has a `parser.py`, it must make the agent end with **our output convention**: `{"recommend": true \| false, "reason": "…"}` |
+| `command.md` (required) | the prompt run for **every** job, in your own words: background, what you want, deal-breakers, when to recommend. `$ARGUMENTS` marks where the job details go (appended at the end if missing). Optional front matter: `description` only. Unless the filter has a `parser.py`, it must make the agent end with **our output convention**: `{"fit": true \| false, "dealbreaker": true \| false, "reason": "…"}` — **fit**: does the job meet your requirements (if unsure, true); **dealbreaker**: does one of your deal-breakers clearly apply (if unsure, false). The filter recommends a job that fits with no dealbreaker. (The older `{"recommend": …, "reason": …}` still works; `filter list` suggests updating.) |
 | `filter.yaml` (required) | `job_details` to send (`title, company, locations, workplace_type, employment_type, salary, posted_at, reposted, description`; default the first three + description), `max_description_chars`, the agent's `model`, `tools` (`web_search`, `web_fetch`), `max_turns`, `max_tool_calls`, and `applies_to` (sources or `source/search`; omit = every job) |
-| `parser.py` (optional) | `parse(answer) -> {"recommend": bool, "reason": str}` for a command with its own output format (see `filters.example/verdict-format/`) |
+| `parser.py` (optional) | `parse(answer) -> {"fit": bool, "dealbreaker": bool, "reason": str}` (or the older `{"recommend": bool, "reason": str}`) for a command with its own output format (see `filters.example/verdict-format/`) |
 | any other files | notes the command refers to (e.g. `sponsorship-notes.md`); the agent may read files in its own folder. Under 200 KB each |
 
 A filter's **version** is a hash of its command, its other files and the agent settings in `filter.yaml` (not `parser.py`, not `applies_to`); judgments will be stored per version, so editing a command marks old judgments out of date.
 
 #### `filter list` · `filter show NAME`
-Lists the filters: version, model, tools, how the answer is read (output convention or `parser.py`), which jobs each judges, its description, and any problem (✗ — e.g. an `applies_to` naming no configured source or search) or warning (! — e.g. a command that doesn't mention the output convention or has no `$ARGUMENTS`). Folders that don't load are listed with the reason (file and field). With a name: that filter's settings and files; with `--job`: **exactly the text the agent would get for that job** — the command with the job details in place of `$ARGUMENTS`, inside a block marked as data from the posting (legal boilerplate removed, original casing kept, long descriptions cut and marked).
+Lists the filters: version, model, tools, how the answer is read (output convention or `parser.py`), which jobs each judges, its description, and any problem (✗ — e.g. an `applies_to` naming no configured source or search) or warning (! — e.g. a command that doesn't mention the output convention, still asks for the older `{"recommend": …}` answer, or has no `$ARGUMENTS`). Folders that don't load are listed with the reason (file and field). With a name: that filter's settings and files; with `--job`: **exactly the text the agent would get for that job** — the command with the job details in place of `$ARGUMENTS`, inside a block marked as data from the posting (legal boilerplate removed, original casing kept, long descriptions cut and marked).
 
 | Option | |
 |---|---|
@@ -551,7 +551,7 @@ uv run auto-app filter list --dir filters.example
 Runs each filter's agent on **active, undecided** jobs it hasn't judged yet and sets each job's Step 2 state. Per job and filter:
 
 1. the command is run with the job's details (what `filter show NAME --job N` shows), by an agent that may use the filter's `tools` — web search / web fetch (**linkedin.com blocked**) — and read files in its own folder, within `max_turns` / `max_tool_calls` (then it must answer with what it has);
-2. its answer is read with the output convention (or `parser.py`): **recommend**, **no**, or **couldn't read**;
+2. its answer is read with the output convention (or `parser.py`): **recommend** (fits, no dealbreaker), **no — dealbreaker**, **no — doesn't fit**, or **couldn't read**;
 3. the job becomes **recommended** if any filter that judged it recommends it or its answer couldn't be read (high recall — you see it), **un_recommended** if all said no. A failed run (API error) leaves the job undecided and is retried on the next `filter run`. Jobs you decided on (`want_to_apply` / `applied` / `not_applied`) are never changed.
 
 Every answer is stored with the trace (each lookup), tokens, tool calls and cost. A filter's later edit (new version) doesn't re-judge anything unless you pass `--rescore`.
@@ -584,11 +584,11 @@ uv run auto-app filter run --job 28                      # just job 28 (again, i
 uv run auto-app filter run --job 28 --stream             # … and watch the agent work
 ```
 Output:
-- **Progress while it runs.** First, what will run (`judging 30 runs on 30 jobs, 3 at a time`). Then one line per finished judgment, numbered: `[ 7/30] #28 ml-engineer recommend — reason`. In a terminal, a **live bar** stays at the bottom: done / total, cost so far, elapsed and estimated time left, and which jobs are running now with how long each has taken (`running #28(41s) #31(12s)`). With `--stream`, or when the output is piped or logged, there's no bar; the `[n/N]` lines remain, and `--stream` puts them in each job's header too.
-- **At the end:** how long it took, then totals — recommend / no / couldn't read / errors, how many jobs are now recommended or un_recommended, tokens and cost — and the command to review them (`job browse`).
+- **Progress while it runs.** First, what will run (`judging 30 runs on 30 jobs, 3 at a time`). Then one line per finished judgment, numbered: `[ 7/30] #28 ml-engineer recommend — reason` (or `no — dealbreaker — …` / `no — doesn't fit — …`). In a terminal, a **live bar** stays at the bottom: done / total, cost so far, elapsed and estimated time left, and which jobs are running now with how long each has taken (`running #28(41s) #31(12s)`). With `--stream`, or when the output is piped or logged, there's no bar; the `[n/N]` lines remain, and `--stream` puts them in each job's header too.
+- **At the end:** how long it took, then totals — recommend / no (how many for a dealbreaker) / couldn't read / errors, how many jobs are now recommended or un_recommended, tokens and cost — and the command to review them (`job browse`).
 
 #### `filter why JOB_ID`
-Why a job was or wasn't recommended: for each filter that judged it — its version (current, out of date, or filter removed), model, verdict and reason, how the answer was read (and why not, if it couldn't be), tokens / tool calls / cost, every lookup it made (`web_search`, `web_fetch`, `read_file` with their inputs), and the full answer. `--trace` adds every model turn and tool result.
+Why a job was or wasn't recommended: for each filter that judged it — its version (current, out of date, or filter removed), model, verdict and reason (with its two parts: `fit: yes · dealbreaker: no`; "not given" for older answers), how the answer was read (and why not, if it couldn't be), tokens / tool calls / cost, every lookup it made (`web_search`, `web_fetch`, `read_file` with their inputs), and the full answer. `--trace` adds every model turn and tool result.
 
 ```bash
 uv run auto-app filter why 28
@@ -639,6 +639,7 @@ How well each filter judges, **against your labels** — the same numbers as the
 | missed in all | noise × the jobs it said no to | an estimate of the jobs it wrongly hid |
 | recall | right picks ÷ (right picks + missed in all) | the share of good jobs it finds — the number that matters most |
 | review load | picks ÷ judged | how much it asks you to read |
+| by cause | its "no"s split into dealbreaker and "doesn't fit" rejections, with the audited misses of each | a wrong dealbreaker call hides a job however well it fits (shown once a filter reports dealbreakers) |
 | training data | the noise's **one-sided 95% exact** upper bound vs `AUTO_APP_SELECT__NOISE_LIMIT` (5%) | YES: its unlabelled "no" jobs may train its preference model; NO: how many more clean audits would get there |
 
 Ranges are 95% Wilson intervals. Nothing is cached — every label changes the numbers at once.

@@ -3,7 +3,7 @@
     filters/<name>/
       command.md     the prompt run for every job; `$ARGUMENTS` = the job details
       filter.yaml    job details to send, how the agent runs, which jobs it judges
-      parser.py      optional: parse(answer) -> {"recommend": bool, "reason": str}
+      parser.py      optional: parse(answer) -> {"fit": bool, "dealbreaker": bool, "reason": str}
       <other files>  anything the command refers to; the agent may read them
 
 A filter's version is a hash of everything that shapes the agent's answer except the job:
@@ -33,7 +33,8 @@ JobDetail = Literal["title", "company", "locations", "workplace_type", "employme
 Tool = Literal["web_search", "web_fetch"]
 RESERVED = {"command.md", "filter.yaml", "parser.py"}
 MAX_FILE_BYTES = 200_000  # other files are read by the agent; keep them small
-CONVENTION = re.compile(r'"?recommend"?\s*"?\s*:', re.I)  # the command mentions the {"recommend": …} convention
+CONVENTION = re.compile(r'"?(fit|dealbreaker|recommend)"?\s*"?\s*:', re.I)  # the command mentions the output convention
+SPLIT = re.compile(r'"?dealbreaker"?\s*"?\s*:', re.I)  # … the current one, with fit and dealbreaker
 FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 
@@ -163,7 +164,10 @@ def load_filter(folder: Path) -> Filter:
                  version=filter_version(cmd_path.read_bytes(), files, config))
     if parser is None and not CONVENTION.search(command):
         flt.warnings.append('command.md doesn\'t mention the output convention: end the answer with '
-                            '{"recommend": true | false, "reason": "…"} — or add a parser.py')
+                            '{"fit": true | false, "dealbreaker": true | false, "reason": "…"} — or add a parser.py')
+    elif parser is None and not SPLIT.search(command):
+        flt.warnings.append('command.md uses the older {"recommend": …} answer: ask for {"fit": …, "dealbreaker": …, '
+                            '"reason": …} instead, so a dealbreaker and a poor fit are told apart')
     if "$ARGUMENTS" not in command:
         flt.warnings.append("command.md has no $ARGUMENTS: the job details will be appended at the end")
     return flt

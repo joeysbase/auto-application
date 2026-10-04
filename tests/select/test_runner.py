@@ -86,7 +86,10 @@ def test_convention_parser():
     bad = parse_answer(ML, "I think yes.")
     assert bad.output.recommend is None and not bad.ok and "no {" in bad.error and bad.parser == "convention"
     assert parse_answer(ML, None).error == "the agent gave no answer"
-    assert parse_answer(VF, "Verdict: maybe\nReason: close").output.model_dump() == {"recommend": True, "reason": "close"}
+    assert parse_answer(VF, "Verdict: maybe\nReason: close").output.model_dump() == \
+        {"recommend": True, "reason": "close", "fit": True, "dealbreaker": None}
+    vf = parse_answer(VF, "Verdict: apply\nDealbreaker: yes\nReason: no sponsorship").output
+    assert (vf.recommend, vf.fit, vf.dealbreaker) == (False, True, True)
     assert parse_answer(VF, "nothing").output.recommend is None and parse_answer(VF, "x").parser.startswith("parser.py:")
 
 
@@ -105,3 +108,25 @@ def test_streaming_emits_text_as_it_arrives_and_each_lookup():
     assert [d for k, d in events if k == "tool"][0] == {"name": "read_file", "input": {"path": "sponsorship-notes.md"}}
     assert parse_answer(ML, res.answer).output.recommend is True
     assert FakeClient([answer(True)]).streamed == 0  # without on_event: plain calls
+
+
+def test_fit_and_dealbreaker_convention():
+    from auto_app.select.parse import verdict_text
+
+    o = parse_convention('… {"fit": true, "dealbreaker": false, "reason": "great"}')
+    assert (o.recommend, o.fit, o.dealbreaker, o.reason) == (True, True, False, "great")
+    o = parse_convention('{"fit": true, "dealbreaker": true, "reason": "needs clearance"}')
+    assert (o.recommend, o.fit, o.dealbreaker) == (False, True, True)  # a dealbreaker is enough to say no
+    assert parse_convention('{"fit": false, "dealbreaker": false}').recommend is False
+    assert parse_convention('{"dealbreaker": true}').recommend is False  # fit not needed once ruled out
+    o = parse_convention('{"fit": true}')  # dealbreaker not given: treated as none
+    assert (o.recommend, o.dealbreaker) == (True, None)
+    o = parse_convention('{"recommend": false, "reason": "older answer"}')  # still read
+    assert (o.recommend, o.fit, o.dealbreaker) == (False, False, None)
+    with pytest.raises(ValueError, match="fit"):
+        parse_convention('{"dealbreaker": false}')
+    with pytest.raises(ValueError, match="true or false"):
+        parse_convention('{"fit": "maybe", "dealbreaker": false}')
+    assert [verdict_text(*v) for v in [(True, True, False), (False, True, True), (False, False, True),
+                                       (False, False, False), (False, False, None), (None, None, None)]] == \
+        ["recommend", "no — dealbreaker", "no — dealbreaker, doesn't fit", "no — doesn't fit", "no", "couldn't read"]

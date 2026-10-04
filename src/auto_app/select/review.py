@@ -17,6 +17,8 @@ class Verdict:
     lookups: list[str]
     current: bool  # judged by the filter's current version
     label: bool | None = None  # your label for this filter: good job (True) / bad job (False) / none yet (None)
+    fit: bool | None = None  # the agent's two parts (step2 §3.1); older answers: fit = recommend, dealbreaker None
+    dealbreaker: bool | None = None
     label_origin: str | None = None  # explicit (g / b) | implied (by your decision)
 
     @property
@@ -82,7 +84,8 @@ class Review:
             cur = self.filters.get(name)
             verdicts.append(Verdict(name, r["filter_version"], r["recommend"], r["reason"] or "", lookups,
                                     bool(cur and cur.version == r["filter_version"]),
-                                    fb["label"] if fb else None, fb["origin"] if fb else None))
+                                    label=fb["label"] if fb else None, label_origin=fb["origin"] if fb else None,
+                                    fit=r["fit"], dealbreaker=r["dealbreaker"]))
         text = "\n".join(x for x in (job.get("title"), job.get("company"), description) if x)
         return JobDetail(job, verdicts, description, text)
 

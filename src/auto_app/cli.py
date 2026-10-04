@@ -770,7 +770,8 @@ def _select(
     cost = f"${rep.cost:.2f}" + (f" + {rep.cost_unknown} runs without a configured price" if rep.cost_unknown else "")
     if runner is not None and kind == "claude-cli" and claude_filters:
         cost += " (Claude Code: list-price equivalent, billed to your subscription)"
-    typer.echo(f"\njudged {rep.judged}: {rep.recommend} recommend, {rep.no} no, {rep.unparsed} couldn't read, "
+    no = f"{rep.no} no" + (f" ({rep.dealbreakers} for a dealbreaker)" if rep.dealbreakers else "")
+    typer.echo(f"\njudged {rep.judged}: {rep.recommend} recommend, {no}, {rep.unparsed} couldn't read, "
                f"{rep.errors} errors (retried next time)"
                + (f"; {rep.skipped_budget} not run (--max-cost reached)" if rep.skipped_budget else ""))
     typer.echo(f"jobs now: {rep.recommended_jobs} recommended, {rep.un_recommended_jobs} un_recommended "
@@ -786,6 +787,7 @@ def why(
     out: OutOpt = None,
 ):
     """Step 2: why a job was (or wasn't) recommended — each filter's answer, how it was read, what it looked up."""
+    from auto_app.select.parse import verdict_text
     from auto_app.select.filters import FILTERS_DIR, load_filters
 
     store = _store(out)
@@ -805,7 +807,10 @@ def why(
         ver = r["filter_version"]
         when = ("current" if current.get(r["filter"]) == ver else
                 "out of date" if r["filter"] in current else "filter no longer present")
-        verdict = {True: "recommend", False: "no", None: "couldn't read"}[r["recommend"]] if r["status"] != "error" else "error"
+        verdict = verdict_text(r["recommend"], r["fit"], r["dealbreaker"]) if r["status"] != "error" else "error"
+        if r["status"] != "error" and r["fit"] is not None:
+            verdict += f"   (fit: {'yes' if r['fit'] else 'no'} · dealbreaker: " \
+                       f"{'yes' if r['dealbreaker'] else 'no' if r['dealbreaker'] is False else 'not given'})"
         cost = f"${r['cost_usd']:.4f}" if r["cost_usd"] is not None else "cost unknown"
         typer.echo(f"\n── {r['filter']}  v{ver} ({when}) · {r['model']} · {r['created_at'][:16]}")
         typer.echo(f"   verdict   {verdict}" + (f" — {r['reason']}" if r["reason"] else ""))

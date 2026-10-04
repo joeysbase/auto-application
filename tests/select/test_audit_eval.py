@@ -180,3 +180,25 @@ async def test_each_app_shows_only_its_own_keys(env):  # noqa: F811
     async with app.run_test(size=(200, 50)) as pilot:
         assert app.check_action("draw", ()) is False and app.check_action("decide", ()) is True
         await pilot.press("q")
+
+
+def test_evaluation_splits_misses_by_cause(env):  # noqa: F811
+    from auto_app.core.db import tables as T
+
+    db, rv, jobs, _ = env  # ml said no to sales and analyst
+    with db.engine.begin() as conn:  # ml's "no" on sales was for a dealbreaker; on analyst, a poor fit
+        conn.execute(T.judgments.update().where(T.judgments.c.job_id == jobs["sales"], T.judgments.c.filter == "ml")
+                     .values(dealbreaker=True))
+        conn.execute(T.judgments.update().where(T.judgments.c.job_id == jobs["analyst"], T.judgments.c.filter == "ml")
+                     .values(fit=False, dealbreaker=False))
+    audit.draw(db, "ml", 5, rng=random.Random(0))
+    rv.label(jobs["sales"], "ml", True)  # it should have recommended it: a wrong dealbreaker call
+    rv.label(jobs["analyst"], "ml", False)
+    [e] = evaluate(db, ["ml"], 0.05)
+    assert e.no_dealbreaker == 1 and (e.noise_dealbreaker.k, e.noise_dealbreaker.n) == (1, 1)
+    assert (e.noise_fit.k, e.noise_fit.n) == (0, 1)
+    assert "by cause       dealbreaker: 1 said no, 1 audited, 1 missed" in "\n".join(e.lines())
+    [v] = [v for v in rv.detail(jobs["sales"]).verdicts if v.filter == "ml"]
+    from auto_app.process.job_browser import _verdict
+
+    assert _verdict(v) == "no — dealbreaker, doesn't fit"  # (the fixture's older answer: fit = no)

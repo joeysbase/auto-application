@@ -238,3 +238,25 @@ def test_progress_is_reported_per_run_with_counts_and_cost(env):
     live.finish()
     text = buf.getvalue()
     assert "[1/2] #5" in text and "[not] markup" in text and "took " in text
+
+
+def test_fit_and_dealbreaker_are_stored_and_decide_the_state(env):
+    db, folder, jobs = env
+    flt = load_filter(folder / "ml")
+
+    def two_parts(kwargs):
+        p = prompt_of(kwargs)
+        if "Title: ML Engineer" in p:
+            return response(text('{"fit": true, "dealbreaker": true, "reason": "requires clearance"}'))
+        if "Title: Sales Lead" in p:
+            return response(text('{"fit": false, "dealbreaker": false, "reason": "not engineering"}'))
+        return response(text('{"fit": true, "dealbreaker": false, "reason": "close enough"}'))
+
+    rep = run_select(db, CFG, [flt], api_runner(FakeClient(two_parts)), SelectOptions())
+    assert (rep.recommend, rep.no, rep.dealbreakers) == (1, 2, 1)
+    lines = "\n".join(rep.lines)
+    assert "no — dealbreaker — requires clearance" in lines and "no — doesn't fit — not engineering" in lines
+    [row] = db.judgment_rows(job_id=jobs["ml"])
+    assert (row["recommend"], row["fit"], row["dealbreaker"]) == (False, True, True)
+    assert db.job(jobs["ml"])["step2"] == "un_recommended"  # fits, but a dealbreaker rules it out
+    assert db.job(jobs["analyst"])["step2"] == "recommended"

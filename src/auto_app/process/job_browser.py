@@ -26,6 +26,7 @@ from auto_app.core.config import UiConfig
 from auto_app.process.jobs_view import STATE_LABEL, _cut, _date, expiry, format_job
 from auto_app.select import audit
 from auto_app.select.evaluate import evaluate
+from auto_app.select.parse import verdict_text
 from auto_app.select.review import Review, Undo
 
 TABS = ("all", "not_evaluated", "recommended", "un_recommended", "want_to_apply", "applied", "not_applied", "archived")
@@ -149,7 +150,10 @@ class JobBrowser(Review):
 
 
 def _verdict(v) -> str:
-    return "recommend" if v is True else "no" if v is False else "couldn't read"
+    """A verdict (or the bare recommend value) in words: recommend / no — dealbreaker / no — doesn't fit / …"""
+    if isinstance(v, bool) or v is None:
+        return verdict_text(v)
+    return verdict_text(v.recommend, v.fit, v.dealbreaker)
 
 
 def _thumbs(fb: dict) -> str:
@@ -352,7 +356,7 @@ class JobBrowserApp(App):
         for i, v in enumerate(d.verdicts):
             pick = "▸" if i == self.filter_index and len(d.verdicts) > 1 else " "
             old = "" if v.current else " [dim](older version)[/]"
-            out.append(f"{pick}[b][{i + 1}] {escape(v.filter)}[/b]   {_verdict(v.recommend)} · "
+            out.append(f"{pick}[b][{i + 1}] {escape(v.filter)}[/b]   {_verdict(v)} · "
                        f"{_label_text(v)}{old}")
             if v.reason:
                 out.append(f"    {escape(v.reason)}")
@@ -424,7 +428,7 @@ class JobBrowserApp(App):
         v = self.detail.verdicts[self.filter_index]
         self.browser.label(job["job_id"], v.filter, good)
         self.status(f"#{job['job_id']}: {v.filter} {'should' if good else 'should not'} recommend it "
-                    f"(it said {_verdict(v.recommend)}) — saved")
+                    f"(it said {_verdict(v)}) — saved")
         self._after_label(job["job_id"])
 
     def action_label_all(self, good: bool) -> None:

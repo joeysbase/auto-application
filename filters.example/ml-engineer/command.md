@@ -24,4 +24,6 @@ $ARGUMENTS
 
 ## Answer
 Explain briefly, then end your answer with a JSON object on its own, and nothing after it:
-{"recommend": true | false, "reason": "one or two sentences: the main fit, and any deal-breaker you found"}
+{"fit": true | false, "dealbreaker": true | false, "reason": "one or two sentences: the main fit, and any deal-breaker you found"}
+- fit: does the job match my background and what I want? If unsure, true.
+- dealbreaker: true only if one of my deal-breakers clearly applies (the posting says so, or you found it); if unsure, false.

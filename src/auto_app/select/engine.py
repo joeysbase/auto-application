@@ -5,7 +5,7 @@ A (job, filter) pair is judged when the job is active and undecided, the filter'
 the filter hasn't judged it yet — or, with `rescore`, judged it with an older version. A failed run is
 retried on the next `select`.
 
-Per filter: recommends = its answer says recommend, or couldn't be read (high recall).
+Per filter: recommends = its answer says the job fits and has no dealbreaker, or couldn't be read (high recall).
 A job is recommended if any filter that judged it (current versions) recommends it; un_recommended when all
 of them said no; undecided while a filter's run failed or is missing. Jobs you decided on are never changed.
 """
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from auto_app.select.filters import Filter, render
 from auto_app.select.job_details import build_job_details
-from auto_app.select.parse import parse_answer
+from auto_app.select.parse import parse_answer, verdict_text
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ class SelectReport:
     planned: list[tuple[int, str]] = field(default_factory=list)  # (job_id, filter)
     judged: int = 0
     recommend: int = 0
+    dealbreakers: int = 0  # of the "no"s, those with a dealbreaker
     no: int = 0
     unparsed: int = 0
     errors: int = 0
@@ -269,9 +270,13 @@ def _record(store, rep: SelectReport, touched: list, job_id: int, flt: Filter, d
     elif parsed.output.recommend:
         rep.recommend += 1
         verdict = "recommend"
+    elif parsed.output.dealbreaker:
+        rep.no += 1
+        rep.dealbreakers += 1
+        verdict = verdict_text(False, parsed.output.fit, True)
     else:
         rep.no += 1
-        verdict = "no"
+        verdict = verdict_text(False, parsed.output.fit, parsed.output.dealbreaker)
     line = (f"#{job_id:<5} {flt.name:<18} {verdict}"
             + (f" — {parsed.output.reason[:90]}" if parsed.ok and parsed.output.reason else ""))
     rep.lines.append(line)
@@ -286,10 +291,11 @@ def reparse(store, cfg, filters: list[Filter], dry_run: bool = False) -> list[st
             if r["status"] == "error":
                 continue
             parsed = parse_answer(flt, r["answer"])
-            if (parsed.output.recommend, parsed.output.reason) == (r["recommend"], r["reason"] or ""):
+            o = parsed.output
+            if (o.recommend, o.fit, o.dealbreaker, o.reason) == (r["recommend"], r["fit"], r["dealbreaker"], r["reason"] or ""):
                 continue
-            old = {True: "recommend", False: "no", None: "couldn't read"}[r["recommend"]]
-            new = {True: "recommend", False: "no", None: "couldn't read"}[parsed.output.recommend]
+            old = verdict_text(r["recommend"], r["fit"], r["dealbreaker"])
+            new = verdict_text(o.recommend, o.fit, o.dealbreaker)
             changes.append(f"#{r['job_id']:<5} {flt.name:<18} v{r['filter_version']}: {old} → {new}")
             if not dry_run:
                 store.update_parsed(r["job_id"], r["filter_version"], parsed)

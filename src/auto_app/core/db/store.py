@@ -460,6 +460,8 @@ class DbStore:
         status = "error" if run.status == "error" else ("ok" if parsed.ok else "unparsed")
         row = dict(job_id=job_id, filter_version=flt.version, filter=flt.name, model=flt.config.model, status=status,
                    answer=run.answer, recommend=parsed.output.recommend if status != "error" else None,
+                   fit=parsed.output.fit if status != "error" else None,
+                   dealbreaker=parsed.output.dealbreaker if status != "error" else None,
                    reason=parsed.output.reason, parser=parsed.parser, parse_error=parsed.error, error=run.error,
                    trace=zjson(run.trace), input_tokens=run.input_tokens, output_tokens=run.output_tokens,
                    tool_calls=run.tool_calls, cost_usd=cost, created_at=utcnow(), parsed_at=utcnow())
@@ -473,11 +475,13 @@ class DbStore:
             conn.execute(update(jt).where(jt.c.job_id == job_id, jt.c.filter_version == filter_version,
                                           jt.c.status != "error").values(
                 status="ok" if parsed.ok else "unparsed", recommend=parsed.output.recommend,
+                fit=parsed.output.fit, dealbreaker=parsed.output.dealbreaker,
                 reason=parsed.output.reason, parser=parsed.parser, parse_error=parsed.error, parsed_at=utcnow()))
 
     def judgment_rows(self, job_id: int | None = None, filter: str | None = None, with_answer: bool = False) -> list[dict]:
         jt = T.judgments
-        cols = [jt.c.job_id, jt.c.filter, jt.c.filter_version, jt.c.model, jt.c.status, jt.c.recommend, jt.c.reason,
+        cols = [jt.c.job_id, jt.c.filter, jt.c.filter_version, jt.c.model, jt.c.status, jt.c.recommend, jt.c.fit,
+                jt.c.dealbreaker, jt.c.reason,
                 jt.c.parser, jt.c.parse_error, jt.c.error, jt.c.input_tokens, jt.c.output_tokens, jt.c.tool_calls,
                 jt.c.cost_usd, jt.c.created_at]
         if with_answer:

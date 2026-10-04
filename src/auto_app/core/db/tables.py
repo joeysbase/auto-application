@@ -206,7 +206,9 @@ judgments = Table(  # one agent run of one filter version on one job
     Column("model", String),
     Column("status", String, nullable=False),  # ok | unparsed | error
     Column("answer", Text),  # the raw final answer
-    Column("recommend", Boolean),  # parsed output; NULL = couldn't read (or error)
+    Column("recommend", Boolean),  # parsed output: fit and no dealbreaker; NULL = couldn't read (or error)
+    Column("fit", Boolean),  # the job meets your requirements (older answers: = recommend)
+    Column("dealbreaker", Boolean),  # a deal-breaker applies (NULL: not given — treated as no)
     Column("reason", Text),
     Column("parser", String),  # "convention" or "parser.py:<hash>"
     Column("parse_error", Text),

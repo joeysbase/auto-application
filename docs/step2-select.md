@@ -15,7 +15,7 @@ jobs ─────┴─► agent runs the command on the job ─► answer �
                                                                      your decisions train each filter's preference model
 ```
 
-Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 ✅ (review in `auto-app job browse`: decisions, per-filter feedback, `want_to_apply` queue); S4 ✅ (judged jobs archived as training data, good / bad labels, `filter audit`, `filter eval`). Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Next: the preference model (S5) — after enough labels and audits. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
+Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 ✅ (review in `auto-app job browse`: decisions, per-filter feedback, `want_to_apply` queue); S4 ✅ (judged jobs archived as training data, good / bad labels, `filter audit`, `filter eval`). Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. The agent answers fit + dealbreaker (§3.1). The preference model (S5) is deferred — evaluation decides whether it's needed (§7.5). Depends on Step 1 (parsed jobs with descriptions; job state from C11).
 
 ---
 
@@ -129,12 +129,18 @@ Nothing else: scores, matched skills, deal-breakers or links your command asks f
 
 ### 3.1 Our output convention (default)
 
-Every command without a `parser.py` makes the agent end its answer with:
+Every command without a `parser.py` makes the agent end its answer with **two judgments** (since 2026-10-04):
 
 ```
-{"recommend": true | false, "reason": "…"}
+{"fit": true | false, "dealbreaker": true | false, "reason": "…"}
 ```
-— a JSON object on its own, with nothing after it. The built-in parser takes the **last** JSON object in the answer; `recommend` must be `true` or `false`; `reason` is optional (missing → empty). Anything else can come before it. We suggest commands also say "if unsure, recommend" (high recall), as in the example.
+- **`fit`** — does the job meet your requirements (what you want, your background, preferences)? If unsure, true.
+- **`dealbreaker`** — does one of the command's deal-breakers apply? True only when the posting or a lookup **clearly** shows it; if unsure, false (high recall).
+- The filter **recommends** the job when it fits and has no dealbreaker (a dealbreaker alone is enough to say no — `fit` may then be left out).
+
+A JSON object on its own, with nothing after it. The built-in parser takes the **last** JSON object in the answer; the values must be `true` or `false`; `reason` is optional (missing → empty). Anything else can come before it. The older `{"recommend": true | false, "reason": "…"}` is still read (fit = recommend, dealbreaker not given — treated as none); `filter list` warns about commands that still ask for it.
+
+Why two parts: a job can fit perfectly and still be ruled out (sponsorship, clearance, years), and the two mistakes differ — a wrong dealbreaker call hides a job however well it fits. Keeping them apart lets evaluation tell them apart (§7.6, "by cause"), and leaves room for a preference model that judges **fit only**, with the agent's dealbreaker as a veto (§7.5, deferred).
 
 ### 3.2 Your own parser — `parser.py` (optional)
 
@@ -186,9 +192,9 @@ The loop: send the command + job → the model calls tools → results go back �
 
 Per filter that judged the job:
 ```
-the filter recommends  =  its agent's parsed output says recommend
+the filter recommends  =  its agent says the job fits AND finds no dealbreaker (§3.1)
                        OR its answer couldn't be read (recommend = None)   ← high recall: you see it
-                       OR its preference model says recommend             (once it exists — §7)
+(deferred, §7.5: … OR its preference model says it fits — never past the agent's dealbreaker)
 ```
 ```
 job recommended  =  any filter that judged it recommends
@@ -197,7 +203,7 @@ otherwise        →  un_recommended
 - A job whose agent run failed (not just unreadable) waits for the retry and isn't decided yet.
 - Review lists recommended jobs newest first (no app-defined ranking), with each filter's reason; jobs there only because an answer couldn't be read are marked so.
 - Jobs keep their Step 1 warnings (e.g. "looks like job #12, which you applied to"), shown in review.
-- un_recommended jobs follow C11's TTL (deleted after 7 days unseen) — keep that in mind while a command is new; `jobs --state un_recommended` lets you check them, and `mark` can promote one.
+- un_recommended jobs follow the TTL (archived after 7 days unseen, as training data — S4); `job browse --state un_recommended` lets you check them, `filter audit` samples them at random, and `m` / `job mark` can promote one.
 
 ---
 
@@ -282,6 +288,8 @@ The **same full-screen app** as `job browse`, opened in audit mode: **only the A
 - Audit labels are ordinary labels (they also train the model); the sample membership is what makes them usable for unbiased estimates.
 
 ### 7.5 Preference model — one per filter, with shadow mode
+
+> **Deferred (2026-10-04).** Not built for now: with few labels and low volume, a model may not beat a good command, and it can't judge dealbreakers (a deciding sentence in a long posting, or facts that need a lookup). Evaluation (§7.6) decides — if the agent's recall and precision are good enough, no model is needed; if it misses jobs in ways command edits can't fix, try your labelled jobs as examples in the prompt first. If built, it judges **fit only** (the agent's `fit`, §3.1) on dealbreaker-free jobs, the agent's `dealbreaker` vetoes it, and its encoder is fixed (local or API embeddings) with a classification head trained per filter. The design below stays as the plan.
 
 Fixed:
 - **One per filter**, learning that filter's taste (different filters stand for different preferences). Tied to the filter's **name**, not its version. Trained state in `data/`.
@@ -443,7 +451,7 @@ auto-app filter train [-f NAME]… [--force]                        # retrain no
 | S2 ✅ | Agent judgment: agent runners — our loop on the Claude API, headless Claude Code with your login (`runner: auto`), and DeepSeek for `deepseek-…` models (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
 | S3 ✅ | Review app (Textual; merged into `job browse`): Recommended / Un-recommended / Want to apply lists, detail pane, decisions (`want_to_apply` / `not_applied`), per-filter feedback (`feedback` table), undo, open link; `want_to_apply` state + no-expiry rule; data layer tested without the UI, the app with Textual's test driver — `src/auto_app/select/review.py`, `process/job_browser.py` |
 | S4 ✅ | Evaluation + audit: every expired judged job archived as training data, with its parsed fields (fixes the purge bug; never-judged jobs still deleted); dedup within the archive; a re-seen archived listing becomes a new job; stored random audit draws, `filter audit` (the app's Audit tab with a live evaluation panel; `B`, `d`, `e`), per-filter good / bad labels (§7.1, replacing right / wrong), `filter eval` (precision, misses, recall, review load, noise; Wilson ranges, one-sided exact noise test) — design §7.1–7.4, 7.6, 7.8. As built (2026-10-04): noise pooled over a filter's draws × its current "no" count (not weighted per draw); archive dedup by matching keys + same title; `--rerun` later |
-| S5 | Preference model per filter (§7.5): embeddings + calibrated logistic regression, frozen verdicts per model version, batch retraining (≥ 10 new labels, on leaving the app / at `filter run`, `filter train`), drift check (significant drop in recent precision → retrain now, back to shadow if still below the rule), offline replay test, **shadow mode** (Second look tab, automatic switch on / back to shadow), OR with the agent; un-recommended jobs as training data only while the noise is below the limit (§7.7); two-judge scorecard in `filter eval` and the panel |
+| S5 (deferred) | Preference model per filter (§7.5) — fit only, dealbreaker veto, fixed encoder + per-filter head: embeddings + calibrated logistic regression, frozen verdicts per model version, batch retraining (≥ 10 new labels, on leaving the app / at `filter run`, `filter train`), drift check (significant drop in recent precision → retrain now, back to shadow if still below the rule), offline replay test, **shadow mode** (Second look tab, automatic switch on / back to shadow), OR with the agent; un-recommended jobs as training data only while the noise is below the limit (§7.7); two-judge scorecard in `filter eval` and the panel |
 
 ## 12. Risks
 

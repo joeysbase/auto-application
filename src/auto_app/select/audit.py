@@ -25,6 +25,16 @@ def latest_verdicts(store, filter: str | None = None, version: str | None = None
     return out
 
 
+def latest_dealbreakers(store, version: str | None = None) -> dict[tuple[int, str], bool | None]:
+    """(job, filter) → whether its latest readable answer named a dealbreaker (None: not given)."""
+    out: dict[tuple[int, str], bool | None] = {}
+    for r in store.judgment_rows():
+        if r["status"] == "error" or (version and r["filter_version"] != version):
+            continue
+        out[(r["job_id"], r["filter"])] = r["dealbreaker"]
+    return out
+
+
 def labels(store) -> dict[tuple[int, str], bool]:
     """(job, filter) → your label (good / bad)."""
     fb = T.feedback

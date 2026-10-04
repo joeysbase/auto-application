@@ -8,4 +8,5 @@ $ARGUMENTS
 
 Answer in exactly this format:
 Verdict: apply | maybe | skip
+Dealbreaker: yes | no   (yes only if the posting rules me out: no sponsorship, clearance, citizenship)
 Reason: one or two sentences
