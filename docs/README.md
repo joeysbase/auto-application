@@ -6,7 +6,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
 |---|---|---|---|
 | 1 | [step1-collect.md](step1-collect.md) | *What jobs are out there?* Collect postings from job sites and company career sites, store them, and turn them into one clean, deduplicated list of jobs | Raw collection working for LinkedIn; plugins, parse, DB, dedup designed |
 | 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | S1–S3 implemented (filters, agent judgment, review in `job browse`); preference model open |
-| 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Tailor the CV per job and submit, with a human approving | Designed |
+| 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Several applications at a time: per-platform applier chains with fallback (Simplify hand-off first; Greenhouse, Lever, Ashby later), answers from your profile and answer bank, a needs-input queue for what only you can answer, review or auto-submit | Designed (2026-10-04) |
 
 Implementation progress, one entry per feature: [updates/](updates/README.md).
 
@@ -57,7 +57,7 @@ pool ──(step 2)──► un_recommended ──(you, in review: "should have 
 
 - **Review** (`auto-app job browse`, [step2 §8](step2-select.md#8-review)) records your decision — `want_to_apply` or `not_applied` — and, separately, per-filter feedback on whether each verdict was right (the preference models' labels).
 - **`want_to_apply` is a queue.** Step 3 picks queued jobs up, applies, and sets `applied`. *How* the queue is worked is your choice — one at a time, one every N minutes, at most N a day, in an order you pick ([step3 §1](step3-apply.md)).
-- Step 3's progress on one application (tailoring, your approval, submission attempts) lives on its application record, not on the job.
+- Step 3's progress on one application (questions, your answers, applier attempts, submission) lives on its application record, not on the job.
 
 Implemented in C11 (Step 1): the two fields, the TTL and archiving below; `want_to_apply` and review in Step 2 S3. `auto-app job mark JOB… --as recommended | un_recommended | want_to_apply | applied | not_applied | not_evaluated` sets them by hand (until Step 3 exists, also `applied`).
 

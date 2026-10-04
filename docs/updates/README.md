@@ -9,6 +9,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-04 | Design: Step 3 — parallel appliers with fallback chains (Simplify hand-off first), needs-input queue + `apply inbox`, YAML profile / answers up front, review or auto-submit; no LinkedIn Easy Apply automation; tailoring deferred | 3 | 📐 designed | [2026-10-04-step3-design](2026-10-04-step3-design.md) |
 | 2026-10-04 | Agent answers **fit + dealbreaker** (recommend = fit and no dealbreaker; older answers still read); evaluation by cause; preference model deferred | 2 | ✅ done | [2026-10-04-fit-dealbreaker](2026-10-04-fit-dealbreaker.md) |
 | 2026-10-04 | Step 2 S4: judged jobs archived as training data (purge bug fixed; dedup within the archive; re-seen listing = new job), good / bad labels, `filter audit` (Audit tab + live evaluation panel), `filter eval` | 1–2 | ✅ done | [2026-10-04-s4-audit-eval](2026-10-04-s4-audit-eval.md) |
 | 2026-10-04 | Design: evaluation + audit (interactive, live eval panel), the label and its bias, preference model data plan; judged jobs = training data (archived, never deleted; dedup within the archive); model as a second judge with shadow mode; un-recommended as training data only below the noise limit; purge bug found | 2 | 📐 designed | [2026-10-04-eval-audit-design](2026-10-04-eval-audit-design.md) |
@@ -59,7 +60,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
 | Step 2 S5 (deferred — evaluation decides): preference model, fit only, dealbreaker veto | 2 | [step2 §7.5–7.6](../step2-select.md) |
-| Step 3: want-to-apply queue policy, then tailoring and submission | 3 | [step3 §0](../step3-apply.md) |
+| Step 3 A1: profile / answers / policy, applier chain runner, Simplify hand-off + manual, `apply inbox` (hand-offs) | 3 | [step3 §10](../step3-apply.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).
 
