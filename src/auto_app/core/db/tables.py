@@ -150,15 +150,16 @@ jobs = Table(
     # state (docs/README.md §3): Step 2's verdict and your decision; NULL = not yet
     Column("step2", String),  # recommended | un_recommended
     Column("step2_at", Ts),
-    Column("decision", String),  # applied | not_applied
+    Column("decision", String),  # want_to_apply | applied | not_applied
     Column("decided_at", Ts),
     Column("first_seen_at", Ts),
     Column("last_seen_at", Ts),  # latest last-seen of any posting (refreshed by dedup and purge)
     Column("expires_at", Ts),  # last_seen_at + the TTL of the job's state (jobs.ttl_days)
-    # archived (step1 §9.2): a compact record, excluded from dedup
+    # archived (step1 §9.2): a record kept as training data — never merged with active jobs
     Column("archived_at", Ts, index=True),
     Column("archive", JSON),
-    Column("archive_description", LargeBinary),  # zstd; applied jobs only
+    Column("archive_description", LargeBinary),  # zstd; applied jobs only (judged jobs also keep their primary posting's parsed fields)
+    Column("duplicate_of", Integer),  # archived only: the earlier archived job this one duplicates (step2 §7.8)
     Column("warnings", JSON),  # e.g. [{"kind": "repost", "job_id": 12, "text": "looks like job #12, …"}]
 )
 
@@ -230,15 +231,33 @@ reviews = Table(  # your decisions in review = training labels (S3)
     Column("created_at", Ts, nullable=False),
 )
 
-feedback = Table(  # your rating of one filter's verdict on one job = a label for that filter's preference model
+feedback = Table(  # your label of one job for one filter (good / bad) = training data for its preference model
     "feedback", metadata,
     Column("job_id", Integer, primary_key=True),  # no FK: labels outlive the job (TTL)
     Column("filter", String, primary_key=True),
     Column("filter_version", String),  # the version whose verdict you rated
     Column("verdict", Boolean),  # what the filter said: recommend (True) / no (False) / couldn't read (NULL)
-    Column("correct", Boolean, nullable=False),  # you: the verdict was right / wrong
+    Column("correct", Boolean),  # S3: the verdict was right — now derived from label (NULL: no verdict)
+    Column("label", Boolean),  # S4: your label — good (True) / bad (False) job for this filter (step2 §7.1)
     Column("origin", String, nullable=False, default="explicit"),  # explicit (g/b) | implied (by your decision)
     Column("reason", Text),
     Column("job_text", Text),  # title + company + description, kept for training
     Column("created_at", Ts, nullable=False),
+)
+
+audit_draws = Table(  # one random sample of a filter's "no" jobs (step2 §7.4)
+    "audit_draws", metadata,
+    Column("draw_id", Integer, primary_key=True, autoincrement=True),
+    Column("filter", String, nullable=False, index=True),
+    Column("filter_version", String),  # the filter's current version when drawn (for reference)
+    Column("pool_size", Integer, nullable=False),  # how many unlabeled "no" jobs it was drawn from
+    Column("size", Integer, nullable=False),
+    Column("drawn_at", Ts, nullable=False),
+)
+
+audit_items = Table(  # the jobs in a draw; labeled once a feedback row exists for (job, filter)
+    "audit_items", metadata,
+    Column("draw_id", Integer, ForeignKey("audit_draws.draw_id"), primary_key=True),
+    Column("job_id", Integer, primary_key=True),  # no FK: kept with the labels
+    Column("filter", String, nullable=False, index=True),
 )

@@ -2,10 +2,13 @@
 (docs/step2-select.md §8).
 
 Left: the jobs in one tab (All, Not evaluated, Recommended, Un-recommended, Want to apply, Applied, Not applied,
-Archived; `tab` switches). Right: the selected job — what `job show` prints, every filter's verdict, reason and
-lookups with your feedback, then the description. Keys save at once: `a` want to apply, `n` not apply,
-`g` / `b` the picked filter was right / wrong, `m` any state, `u` undo; `s` / `c` / `/` narrow the list.
-Your answers go through `Review` (select/review.py); archived records are read-only.
+Archived; `tab` switches). Right: the selected job — what `job show` prints, every filter's verdict, reason
+and lookups with your label, then the description. Keys save at once: `a` want to apply, `n` not apply,
+`g` / `b` the picked filter should / shouldn't recommend this job (`B`: no filter should), `m` any state, `u` undo;
+`s` / `c` / `/` narrow the list. Audit mode (`filter audit`, §7.4) shows only the Audit tab — random samples of
+each filter's "no" jobs — and only the keys involved in labelling them (no decisions, states or narrowing); `d` draws
+more; `e` shows the evaluation panel, recomputed after every label. Your answers go through `Review`
+(select/review.py); archived jobs can be labelled (they're training data) but not decided on or changed.
 """
 
 import webbrowser
@@ -21,15 +24,21 @@ from textual.widgets.option_list import Option
 from auto_app.core.appearance import system_dark
 from auto_app.core.config import UiConfig
 from auto_app.process.jobs_view import STATE_LABEL, _cut, _date, expiry, format_job
+from auto_app.select import audit
+from auto_app.select.evaluate import evaluate
 from auto_app.select.review import Review, Undo
 
 TABS = ("all", "not_evaluated", "recommended", "un_recommended", "want_to_apply", "applied", "not_applied", "archived")
+AUDIT_TABS = ("audit",)  # `filter audit`: only the randomly drawn jobs — the pool tabs would invite non-random labels
 TAB_TITLES = {"all": "All", "not_evaluated": "Not evaluated", "recommended": "Recommended",
               "un_recommended": "Un-recommended", "want_to_apply": "Want to apply", "applied": "Applied",
-              "not_applied": "Not applied", "archived": "Archived"}
+              "not_applied": "Not applied", "archived": "Archived", "audit": "Audit"}
+AUDIT_MARK = {None: "?", True: "✗", False: "✓"}  # not labelled yet / good for some filter (a miss) / bad for all
 MARKABLE = ("want_to_apply", "applied", "not_applied", "recommended", "un_recommended", "not_evaluated")
 DECISION_MARK = {"want_to_apply": "★", "not_applied": "✗", "applied": "✓"}
 FOLLOW_EVERY_S = 3  # how often theme auto checks the system's mode
+AUDIT_ONLY = {"draw"}  # keys that only make sense in `filter audit`
+BROWSE_ONLY = {"decide", "mark", "narrow", "next_list", "prev_list"}  # decisions, states, narrowing, tabs: not audit
 
 
 class JobBrowser(Review):
@@ -37,10 +46,12 @@ class JobBrowser(Review):
     everything `Review` does (details, decisions, feedback)."""
 
     def __init__(self, store, filters: list, ttl=None, sources: list[str] | None = None, company: str | None = None,
-                 only_filters: list[str] | None = None):
+                 only_filters: list[str] | None = None, noise_limit: float = 0.05, audit_more: int = 10):
         super().__init__(store, filters, ttl, only_filters)
         self.sources = list(sources or [])
         self.company = company or ""
+        self.noise_limit = noise_limit
+        self.audit_more = audit_more
 
     def _narrow(self, rows: list[dict]) -> list[dict]:
         if self.sources:
@@ -56,7 +67,10 @@ class JobBrowser(Review):
     def jobs(self, kind: str, search: str = "", keep=()) -> list[dict]:
         """Newest first. keep: jobs changed in this tab during this session stay in it (with their new state and
         mark), so you can see what you did and change your mind."""
-        if kind == "archived":
+        if kind == "audit":
+            status = audit.audit_status(self.store, self.only or None)
+            rows = [{**j, "audit": status[j["job_id"]]} for j in self.store.jobs(archived=None) if j["job_id"] in status]
+        elif kind == "archived":
             rows = self.store.jobs(archived=True)
         else:
             rows = self.store.jobs()
@@ -67,6 +81,8 @@ class JobBrowser(Review):
             q = search.lower()
             rows = [j for j in rows if q in f"{j.get('title') or ''} {j.get('company') or ''} "
                                              f"{' '.join(j.get('sources') or [])} {j['job_id']}".lower()]
+        if kind == "audit":  # what's left to label first, then the newest
+            return sorted(rows, key=lambda j: (all(v is not None for v in j["audit"].values()), -j["job_id"]))
         return sorted(rows, key=lambda j: (j.get("posted_at") or j.get("first_seen_at") or "", j["job_id"]), reverse=True)
 
     def counts(self) -> dict[str, int]:
@@ -74,7 +90,37 @@ class JobBrowser(Review):
         out = {k: sum(1 for j in active if j["state"] == k) for k in TABS}
         out["all"] = len(active)
         out["archived"] = len(self._narrow(self.store.jobs(archived=True)))
+        status = audit.audit_status(self.store, self.only or None)
+        out["audit"] = sum(1 for v in status.values() if None in v.values())  # jobs still to label
+        out["audit_total"] = len(status)
         return out
+
+    # ---- audit and evaluation (§7.4, §7.6) ----------------------------------------------------------
+
+    def audit_filters(self) -> list[str]:
+        """The filters in scope: -f ones, else every filter that has judged a job."""
+        return sorted(self.only) if self.only else sorted({r["filter"] for r in self.store.judgment_rows()})
+
+    def draw(self, n: int | None = None) -> list[str]:
+        """Draw n more random "no" jobs per filter in scope; returns one line per filter."""
+        out = []
+        for name in self.audit_filters():
+            flt = self.filters.get(name)
+            d = audit.draw(self.store, name, n or self.audit_more, flt.version if flt else None)
+            out.append(f"{name}: drew {len(d.jobs)} of {d.pool_size}" if d else f"{name}: nothing left to draw")
+        return out
+
+    def evaluation(self):
+        return evaluate(self.store, self.audit_filters(), self.noise_limit)
+
+    def label_all(self, job_id: int, good: bool) -> list[str]:
+        """Label the job good / bad for every filter shown on it (one undo)."""
+        d = self.detail(job_id)
+        prev = self.store.feedback_of(job_id)
+        for v in d.verdicts:
+            self._label(job_id, v, good, None, "explicit", d.text_for_labels)
+        self.undo_stack.append(Undo("feedback_many", job_id, {"prev": {v.filter: prev.get(v.filter) for v in d.verdicts}}))
+        return [v.filter for v in d.verdicts]
 
     def mark(self, job_id: int, to: str) -> None:
         if to not in MARKABLE:
@@ -85,6 +131,14 @@ class JobBrowser(Review):
         self.undo_stack.append(Undo("mark", job_id, {"prev": {"step2": step2, "decision": decision}}))
 
     def undo(self) -> str | None:
+        if self.undo_stack and self.undo_stack[-1].kind == "feedback_many":
+            u = self.undo_stack.pop()
+            for name, row in u.data["prev"].items():
+                if row:
+                    self.store.set_feedback(row)
+                else:
+                    self.store.delete_feedback(u.job_id, name)
+            return f"labels on #{u.job_id}"
         if self.undo_stack and self.undo_stack[-1].kind == "mark":
             u = self.undo_stack.pop()
             self.store.set_job_state(u.job_id, **u.data["prev"])
@@ -102,10 +156,14 @@ def _thumbs(fb: dict) -> str:
     return "👍" * any(fb.values()) + "👎" * (False in fb.values())
 
 
-def _rating(r, origin=None) -> str:
-    if r is None:
-        return "(not rated)"
-    return ("👍 right" if r else "👎 wrong") + (" (implied by your decision)" if origin == "implied" else "")
+def _label_text(v) -> str:
+    """Your label, worded as what the filter should do with the job — not a grade of its verdict."""
+    if v.label is None:
+        return "you: —"
+    text = "you: " + ("👍 should recommend" if v.label else "👎 shouldn't recommend")
+    if v.right is not None:
+        text += " → " + ("it was right" if v.right else ("it missed it" if v.label else "a bad pick"))
+    return text + (" (implied by your decision)" if v.label_origin == "implied" else "")
 
 
 class StateMenu(ModalScreen):
@@ -138,6 +196,8 @@ class JobBrowserApp(App):
     #main { height: 1fr; }
     #list { width: 3fr; min-width: 50; }
     #detail-box { width: 4fr; border-left: solid $primary; padding: 0 1; }
+    #eval { height: auto; max-height: 40%; padding: 0 1; border-bottom: solid $primary; display: none; }
+    #eval.show { display: block; }
     #prompt { dock: bottom; display: none; }
     #prompt.show { display: block; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
@@ -150,8 +210,9 @@ class JobBrowserApp(App):
         *[Binding(str(i), f"pick({i})", show=False) for i in range(1, 10)],
         Binding("a", "decide('want_to_apply')", "want to apply"),
         Binding("n", "decide('not_applied')", "not apply"),
-        Binding("g", "rate(True)", "right"),
-        Binding("b", "rate(False)", "wrong"),
+        Binding("g", "label(True)", "should recommend"),
+        Binding("b", "label(False)", "shouldn't"),
+        Binding("B", "label_all(False)", "no filter should"),
         Binding("m", "mark", "set state"),
         Binding("u", "undo", "undo"),
         Binding("r", "reason", "reason"),
@@ -159,14 +220,22 @@ class JobBrowserApp(App):
         Binding("slash", "search", "search"),
         Binding("s", "narrow('source')", "source"),
         Binding("c", "narrow('company')", "company"),
+        Binding("d", "draw", "draw more"),
+        Binding("e", "toggle_eval", "evaluation"),
         Binding("escape", "cancel", show=False),
         Binding("q", "quit", "quit"),
     ]
     COLUMNS = (" ", "#", "company", "title", "posted", "state", "expires", "")
 
-    def __init__(self, browser: JobBrowser, open_url=webbrowser.open, start: str = "all", ui: UiConfig | None = None,
-                 dark=system_dark):
+    def __init__(self, browser: JobBrowser, open_url=webbrowser.open, start: str = "recommended", ui: UiConfig | None = None,
+                 dark=system_dark, show_eval: bool = False, audit_mode: bool = False):
         super().__init__()
+        self.show_eval = show_eval or audit_mode
+        self.audit_mode = audit_mode
+        self.tabs = AUDIT_TABS if audit_mode else TABS
+        if audit_mode:
+            start = "audit"
+            self.sub_title = "audit — randomly drawn \"no\" jobs"
         self.browser = browser
         self.open_url = open_url
         self.ui = ui or UiConfig()
@@ -175,13 +244,14 @@ class JobBrowserApp(App):
         self.kind = start
         self.search = ""
         self.rows: list[dict] = []
-        self.answered = {k: set() for k in TABS}  # changed in this session, per tab: stay there with their mark
+        self.answered = {k: set() for k in self.tabs}  # changed in this session, per tab: stay there with their mark
         self.filter_index = 0
         self.prompt_mode: str | None = None  # search | reason | source | company
         self.detail = None
 
     def compose(self) -> ComposeResult:
         yield Static(id="tabs")
+        yield Static(id="eval", classes="show" if self.show_eval else "")
         with Horizontal(id="main"):
             yield DataTable(id="list", cursor_type="row", zebra_stripes=True)
             with VerticalScroll(id="detail-box"):
@@ -225,19 +295,35 @@ class JobBrowserApp(App):
         if keep_job in ids:
             table.move_cursor(row=ids.index(keep_job))
         self.draw_tabs()
+        self.draw_eval()
         self.show_detail()
 
+    def draw_eval(self) -> None:
+        """The evaluation panel (§7.6): recomputed from the database — every label shows at once."""
+        if not self.show_eval:
+            return
+        lines = [line for e in self.browser.evaluation() for line in e.lines()]
+        self.query_one("#eval", Static).update(escape("\n".join(lines) or "no filter has judged a job yet"))
+
     def cells(self, j: dict, fb: dict) -> tuple:
-        """One list row; fb = your ratings of this job ({filter: right?})."""
+        """One list row; fb = your labels of this job ({filter: good?})."""
         state = "archived" if j.get("archived_at") else STATE_LABEL.get(j["state"], j["state"])
-        return (DECISION_MARK.get(j.get("decision"), " "), str(j["job_id"]), _cut(j.get("company"), 16),
+        if "audit" in j:  # the Audit tab: ? to label / ✓ bad for every sampled filter / ✗ good for one (a miss)
+            labs = list(j["audit"].values())
+            mark = AUDIT_MARK[None] if None in labs else AUDIT_MARK[any(labs)]
+        else:
+            mark = DECISION_MARK.get(j.get("decision"), " ")
+        return (mark, str(j["job_id"]), _cut(j.get("company"), 16),
                 _cut(j.get("title"), 40), _date(j.get("posted_at") or j.get("first_seen_at")), state, expiry(j),
                 _thumbs(fb))
 
     def draw_tabs(self) -> None:
         counts = self.browser.counts()
-        parts = [(f"[reverse] {TAB_TITLES[k]} ({counts[k]}) [/]" if k == self.kind else f" {TAB_TITLES[k]} ({counts[k]}) ")
-                 for k in TABS]
+        def title(k: str) -> str:
+            n = f"{counts[k]} left of {counts['audit_total']}" if k == "audit" else counts[k]
+            return f"{TAB_TITLES[k]} ({n})"
+
+        parts = [(f"[reverse] {title(k)} [/]" if k == self.kind else f" {title(k)} ") for k in self.tabs]
         b = self.browser
         notes = [f"source: {', '.join(b.sources)}" if b.sources else "", f"company: {b.company}" if b.company else "",
                  f"filter: {', '.join(sorted(b.only))}" if b.only else "", f"search: {self.search}" if self.search else ""]
@@ -267,7 +353,7 @@ class JobBrowserApp(App):
             pick = "▸" if i == self.filter_index and len(d.verdicts) > 1 else " "
             old = "" if v.current else " [dim](older version)[/]"
             out.append(f"{pick}[b][{i + 1}] {escape(v.filter)}[/b]   {_verdict(v.recommend)} · "
-                       f"{_rating(v.rating, v.rating_origin)}{old}")
+                       f"{_label_text(v)}{old}")
             if v.reason:
                 out.append(f"    {escape(v.reason)}")
             for lk in v.lookups[:6]:
@@ -277,6 +363,7 @@ class JobBrowserApp(App):
         self.query_one("#detail-box").scroll_home(animate=False)
 
     def status(self, text: str) -> None:
+        self.last_status = text
         self.query_one("#status", Static).update(text)
 
     def on_data_table_row_highlighted(self, _event) -> None:
@@ -290,16 +377,22 @@ class JobBrowserApp(App):
         # while typing a search, reason, source or company, keys go to the text box (tab, arrows, letters)
         if self.prompt_mode is not None and action not in ("cancel", "quit"):
             return False
+        # each app's footer lists only what's involved in it (a disabled key is hidden and does nothing)
+        if action in AUDIT_ONLY and not self.audit_mode:
+            return False  # audit samples are drawn and labelled in `filter audit` only
+        if action in BROWSE_ONLY and self.audit_mode:
+            return False  # an audit labels the drawn jobs; deciding on jobs belongs to `job browse`
         return True
 
     def _blocked(self, job: dict | None) -> bool:
+        """Decisions and states: not on archived jobs (labels are fine — they're training data)."""
         if job and job.get("archived_at"):
-            self.status("archived records are read-only")
+            self.status("archived: you can label it (g / b) but not decide on it or change its state")
             return True
         return job is None
 
     def _switch(self, step: int) -> None:
-        self.kind = TABS[(TABS.index(self.kind) + step) % len(TABS)]
+        self.kind = self.tabs[(self.tabs.index(self.kind) + step) % len(self.tabs)]
         self.rows = []
         self.reload()
         self.query_one(DataTable).move_cursor(row=0)
@@ -321,17 +414,62 @@ class JobBrowserApp(App):
             self.filter_index = n - 1
             self.show_detail()
 
-    def action_rate(self, correct: bool) -> None:
+    def action_label(self, good: bool) -> None:
         job = self.current()
-        if self._blocked(job):
+        if job is None:
             return
         if not self.detail or not self.detail.verdicts:
-            self.status("No filter judged this job — nothing to rate.")
+            self.status("No filter judged this job — nothing to label.")
             return
         v = self.detail.verdicts[self.filter_index]
-        self.browser.rate(job["job_id"], v.filter, correct)
-        self.status(f"#{job['job_id']}: {v.filter} was {'right' if correct else 'wrong'} ({_verdict(v.recommend)}) — saved")
-        self.reload(job["job_id"])
+        self.browser.label(job["job_id"], v.filter, good)
+        self.status(f"#{job['job_id']}: {v.filter} {'should' if good else 'should not'} recommend it "
+                    f"(it said {_verdict(v.recommend)}) — saved")
+        self._after_label(job["job_id"])
+
+    def action_label_all(self, good: bool) -> None:
+        job = self.current()
+        if job is None or not self.detail or not self.detail.verdicts:
+            return
+        names = self.browser.label_all(job["job_id"], good)
+        self.status(f"#{job['job_id']}: {'should' if good else 'should not'} be recommended by "
+                    f"{', '.join(names)} — saved")
+        self._after_label(job["job_id"])
+
+    def _after_label(self, job_id: int) -> None:
+        """In the Audit tab a labelled job moves down the list (still-to-label jobs come first), so don't follow it:
+        stay on it while one of its sampled filters is unlabelled (that filter picked), else go to the next
+        still-to-label job — the next one after it in the list as it was."""
+        if self.kind != "audit":
+            self.reload(job_id)
+            return
+        before = [j["job_id"] for j in self.rows]
+        self.reload(job_id)
+        status = {j["job_id"]: j["audit"] for j in self.rows}
+        todo = [f for f, lab in status.get(job_id, {}).items() if lab is None]
+        if todo:  # this job still needs a label for another filter
+            names = [v.filter for v in self.detail.verdicts] if self.detail else []
+            if todo[0] in names:
+                self.filter_index = names.index(todo[0])
+                self.show_detail()
+            return
+        at = before.index(job_id) if job_id in before else -1
+        order = before[at + 1:] + before[:at]
+        nxt = next((j for j in order if None in status.get(j, {}).values()), None)
+        if nxt is None:
+            self.status(f"{getattr(self, 'last_status', '')} · all labelled — d draws more")
+            return
+        self.query_one(DataTable).move_cursor(row=[j["job_id"] for j in self.rows].index(nxt))
+
+    def action_draw(self) -> None:
+        lines = self.browser.draw()
+        self.status("drew more to audit — " + "; ".join(lines) if lines else "no filter has judged a job yet")
+        self.reload()
+
+    def action_toggle_eval(self) -> None:
+        self.show_eval = not self.show_eval
+        self.query_one("#eval", Static).set_class(self.show_eval, "show")
+        self.draw_eval()
 
     def action_decide(self, decision: str) -> None:
         job = self.current()
@@ -396,7 +534,7 @@ class JobBrowserApp(App):
         self._ask("search", "search title / company / source / #id — Enter to apply, Esc to clear", self.search)
 
     def action_reason(self) -> None:
-        if not self._blocked(self.current()):
+        if self.current():
             self._ask("reason", "a reason for your last answer on this job — Enter to save, Esc to cancel")
 
     def action_narrow(self, what: str) -> None:
@@ -445,5 +583,5 @@ def check_themes(ui: UiConfig) -> list[str]:
     return [n for n in names if n not in BUILTIN_THEMES]
 
 
-def run_browser(browser: JobBrowser, start: str = "all", ui: UiConfig | None = None) -> None:
-    JobBrowserApp(browser, start=start, ui=ui).run()
+def run_browser(browser: JobBrowser, start: str = "recommended", ui: UiConfig | None = None, audit_mode: bool = False) -> None:
+    JobBrowserApp(browser, start=start, ui=ui, audit_mode=audit_mode).run()

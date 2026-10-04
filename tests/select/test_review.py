@@ -86,8 +86,9 @@ def test_decide_sets_state_records_review_and_never_expires(env):
     assert {f["filter"] for f in r["filters"]} == {"ml", "research"}
     assert ids(rv.jobs("recommended")) == {jobs["analyst"]} and ids(rv.jobs("want_to_apply")) == {jobs["ml"]}
     assert ids(rv.jobs("recommended", keep={jobs["ml"]})) == {jobs["ml"], jobs["analyst"]}  # answered this session
-    # want to apply: the filter that said no (research) is rated wrong, implied by your decision
-    assert db.feedback_of(jobs["ml"])["research"]["origin"] == "implied"
+    # want to apply: a good job for the filter that said no (research), implied by your decision
+    fb = db.feedback_of(jobs["ml"])["research"]
+    assert (fb["label"], fb["origin"], fb["correct"]) == (True, "implied", False)
     seen_days_ago(db, "nvidia/JR1", 400)
     rep = apply_job_ttl(db, TTL)
     assert jobs["ml"] not in {e.job_id for e in rep.deleted + rep.archived}  # queued: never expires
@@ -97,33 +98,37 @@ def test_decide_sets_state_records_review_and_never_expires(env):
         rv.decide(jobs["sales"], "applied")  # only Step 3 sets applied
 
 
-def test_apply_on_un_recommended_rates_the_no_filters_wrong_unless_rated(env):
+def test_apply_on_un_recommended_labels_it_good_for_the_no_filters_unless_labelled(env):
     db, rv, jobs, _ = env
-    rv.rate(jobs["sales"], "research", True, "fine to skip")  # your own rating wins
+    rv.label(jobs["sales"], "research", False, "fine to skip")  # your own label wins
     rv.decide(jobs["sales"], "want_to_apply")
     fb = db.feedback_of(jobs["sales"])
-    assert (fb["ml"]["correct"], fb["ml"]["origin"], fb["ml"]["verdict"]) == (False, "implied", False)
-    assert (fb["research"]["correct"], fb["research"]["origin"]) == (True, "explicit")
+    assert (fb["ml"]["label"], fb["ml"]["origin"], fb["ml"]["verdict"], fb["ml"]["correct"]) == (True, "implied", False, False)
+    assert (fb["research"]["label"], fb["research"]["origin"], fb["research"]["correct"]) == (False, "explicit", True)
     assert db.job(jobs["sales"])["step2"] == "un_recommended"  # Step 2's verdict is kept
     assert rv.undo() == f"decision on #{jobs['sales']}"
     assert set(db.feedback_of(jobs["sales"])) == {"research"} and db.job(jobs["sales"])["decision"] is None
     assert db.reviews(jobs["sales"]) == []
 
 
-def test_rate_upserts_per_filter_with_version_and_undo_restores(env):
+def test_label_upserts_per_filter_with_version_and_undo_restores(env):
     db, rv, jobs, folder = env
-    rv.rate(jobs["ml"], "ml", True)
-    rv.rate(jobs["ml"], "ml", False)
+    rv.label(jobs["ml"], "ml", True)
+    rv.label(jobs["ml"], "ml", False)  # a bad job, though ml recommended it → a bad pick
     row = db.feedback_of(jobs["ml"])["ml"]
-    assert row["correct"] is False and row["verdict"] is True and row["filter_version"] == load_filter(folder / "ml").version
-    assert rv.add_reason(jobs["ml"], "too senior") == "feedback (ml)"
+    assert (row["label"], row["verdict"], row["correct"]) == (False, True, False)
+    assert row["filter_version"] == load_filter(folder / "ml").version
+    [v] = [v for v in rv.detail(jobs["ml"]).verdicts if v.filter == "ml"]
+    assert (v.label, v.right) == (False, False)
+    assert rv.add_reason(jobs["ml"], "too senior") == "label (ml)"
     assert db.feedback_of(jobs["ml"])["ml"]["reason"] == "too senior"
+    assert rv.marks() == {jobs["ml"]: {"ml": False}}
     rv.undo()
-    assert db.feedback_of(jobs["ml"])["ml"]["correct"] is True  # back to the first rating
+    assert db.feedback_of(jobs["ml"])["ml"]["label"] is True  # back to the first label
     rv.undo()
     assert db.feedback_of(jobs["ml"]) == {} and rv.undo() is None
     with pytest.raises(ValueError, match="didn't judge"):
-        rv.rate(jobs["ml"], "nope", True)
+        rv.label(jobs["ml"], "nope", True)
     assert rv.marks() == {}
 
 
@@ -136,10 +141,12 @@ async def test_app_keys(env):
         while app.current()["job_id"] != jobs["ml"]:
             await pilot.press("down")
         assert "strong ML fit" in str(app.query_one("#detail").render())
-        await pilot.press("g")  # filter 1 (ml) was right
-        await pilot.press("2", "b")  # filter 2 (research) was wrong
+        await pilot.press("g")  # a good job for filter 1 (ml, which recommended it)
+        await pilot.press("2", "b")  # a bad job for filter 2 (research, which said no)
         fb = db.feedback_of(jobs["ml"])
-        assert (fb["ml"]["correct"], fb["research"]["correct"]) == (True, False)
+        assert (fb["ml"]["label"], fb["research"]["label"]) == (True, False)
+        assert (fb["ml"]["correct"], fb["research"]["correct"]) == (True, True)
+        assert "you: 👍 should recommend → it was right" in str(app.query_one("#detail").render())
         await pilot.press("o")
         assert opened and "JR1" in opened[0]
         app.query_one("DataTable").move_cursor(row=[j["job_id"] for j in app.rows].index(jobs["ml"]))

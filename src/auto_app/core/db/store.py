@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, insert, or_, select, update
 
 from auto_app.collect.store import PostingRef, RawPurged, api_capture, api_card, dumps, safe_name, select_retry
 from auto_app.core.db import tables as T
+from auto_app.core.db.job_ttl import original_id
 from auto_app.core.db.engine import make_engine, upgrade
 from auto_app.core.models import Card, Outcome, RawCapture, RawPosting, utcnow
 from auto_app.settings import Paths
@@ -428,7 +429,8 @@ class DbStore:
         return next((j for j in self.jobs(archived=None) if j["job_id"] == job_id), None)
 
     def job_inputs(self, job_id: int) -> tuple[dict | None, list[str]]:
-        """What Step 2 sends about a job: its primary posting's parsed fields and the job's merged locations."""
+        """What Step 2 sends about a job: its primary posting's parsed fields and the job's merged locations
+        (archived jobs keep both: the parsed fields on the primary posting, the locations in the record)."""
         j, p = T.jobs, T.postings
         with self.engine.connect() as conn:
             parsed = conn.execute(select(p.c.parsed).join(j, j.c.primary_posting_id == p.c.posting_id)
@@ -436,6 +438,9 @@ class DbStore:
             locs = [x for (x,) in conn.execute(select(T.job_locations.c.location_norm)
                                                .where(T.job_locations.c.job_id == job_id)
                                                .order_by(T.job_locations.c.location_norm))]
+            if not locs:
+                record = conn.execute(select(j.c.archive).where(j.c.job_id == job_id)).scalar()
+                locs = list((record or {}).get("locations") or [])
         return parsed, locs
 
     # ---- Step 2 -----------------------------------------------------------------------------
@@ -514,11 +519,12 @@ class DbStore:
             return [dict(r) for r in conn.execute(q).mappings()]
 
     def feedback_marks(self) -> dict[int, dict[str, bool]]:
-        """job_id → {filter: correct} for every rating."""
+        """job_id → {filter: good / bad} for every label."""
         out: dict[int, dict[str, bool]] = {}
+        fb = T.feedback
         with self.engine.connect() as conn:
-            for job_id, name, correct in conn.execute(select(T.feedback.c.job_id, T.feedback.c.filter, T.feedback.c.correct)):
-                out.setdefault(job_id, {})[name] = correct
+            for job_id, name, label in conn.execute(select(fb.c.job_id, fb.c.filter, fb.c.label).where(fb.c.label.is_not(None))):
+                out.setdefault(job_id, {})[name] = label
         return out
 
     def feedback_of(self, job_id: int) -> dict[str, dict]:
@@ -628,7 +634,8 @@ class DbStore:
                 when = f" on {iso(decided)[:10]}" if decided else ""
                 what = {"applied": f"which you applied to{when}", "not_applied": f"which you declined{when}",
                         "want_to_apply": f"which you queued to apply to{when}"}.get(
-                    decision, "which Step 2 recommended" if step2 == "recommended" else "archived")
+                    decision, {"recommended": "which Step 2 recommended",
+                               "un_recommended": "which Step 2 left out"}.get(step2, "archived"))
                 w["text"] = f"looks like job #{old} ({(arch or {}).get('title', '')}), {what}"
             if not found:
                 return []
@@ -646,8 +653,9 @@ class DbStore:
              .select_from(p.outerjoin(d, p.c.duplicate_of == d.c.posting_id))
              .where(p.c.job_id == job_id).order_by(p.c.first_seen_at))
         with self.engine.connect() as conn:
-            return [{**{k: iso(v) for k, v in r.items()},
-                     "duplicate_of": f"{r['dsrc']}/{r['djid']}" if r["dsrc"] else None} for r in conn.execute(q).mappings()]
+            return [{**{k: iso(v) for k, v in r.items()}, "source_job_id": original_id(r["source_job_id"]),
+                     "duplicate_of": f"{r['dsrc']}/{original_id(r['djid'])}" if r["dsrc"] else None}
+                    for r in conn.execute(q).mappings()]
 
     def job_keys_of(self, job_id: int) -> list[tuple[str, str]]:
         with self.engine.connect() as conn:

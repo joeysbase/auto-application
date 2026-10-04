@@ -25,7 +25,7 @@ def test_tabs_narrowing_and_counts(browser):
     assert ids(b.jobs("recommended")) == {jobs["ml"]} and ids(b.jobs("un_recommended")) == {jobs["sales"]}
     assert ids(b.jobs("archived")) == {jobs["analyst"]}
     assert b.counts() == {"all": 2, "not_evaluated": 0, "recommended": 1, "un_recommended": 1, "want_to_apply": 0,
-                          "applied": 0, "not_applied": 0, "archived": 1}
+                          "applied": 0, "not_applied": 0, "archived": 1, "audit": 0, "audit_total": 0}
     assert ids(b.jobs("all", search="nvidia")) == {jobs["ml"], jobs["sales"]}  # sources are searched too
     b.sources = ["linkedin"]
     assert ids(b.jobs("all")) == set() and ids(b.jobs("archived")) == {jobs["analyst"]}
@@ -49,7 +49,7 @@ def test_mark_keeps_in_tab_and_undo(browser):
 
 async def test_app_tabs_mark_menu_and_read_only(browser):
     db, b, jobs = browser
-    app = JobBrowserApp(b, open_url=lambda u: None, dark=lambda: False)
+    app = JobBrowserApp(b, open_url=lambda u: None, dark=lambda: False, start="all")
     async with app.run_test(size=(180, 45)) as pilot:
         assert app.kind == "all" and ids(app.rows) == {jobs["ml"], jobs["sales"]}
         while app.current()["job_id"] != jobs["sales"]:
@@ -71,8 +71,10 @@ async def test_app_tabs_mark_menu_and_read_only(browser):
         await pilot.press("shift+tab")
         assert app.kind == "archived" and ids(app.rows) == {jobs["analyst"]}
         await pilot.press("a")
-        assert "read-only" in str(app.query_one("#status").render())
+        assert "not decide on it" in str(app.query_one("#status").render())
         assert db.job(jobs["analyst"])["decision"] == "applied"
+        await pilot.press("b")  # but labelling an archived job is fine: it's training data
+        assert db.feedback_of(jobs["analyst"])["ml"]["label"] is False
         await pilot.press("q")
 
 

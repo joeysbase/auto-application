@@ -193,6 +193,10 @@ class SelectConfig(BaseModel):
         "claude-haiku-4-5-20251001": ModelPrice(input_per_mtok=1.0, output_per_mtok=5.0),
     })
     web_search_usd_per_1000: float = 10.0
+    # evaluation (docs/step2-select.md §7.4–7.7)
+    noise_limit: Annotated[float, Field(gt=0, lt=1)] = 0.05  # unlabelled "no" jobs may train a model below this noise
+    audit_size: Annotated[int, Field(ge=1)] = 30  # jobs per filter drawn by `filter audit`
+    audit_more: Annotated[int, Field(ge=1)] = 10  # jobs per filter drawn by `d` in the app
 
     def cost(self, model: str, input_tokens: int, output_tokens: int, web_searches: int) -> float | None:
         """USD, or None when the model has no price configured."""

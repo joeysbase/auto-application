@@ -484,14 +484,14 @@ def job_browse(
     source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only jobs found on this source (repeatable; `s` in the app)")] = None,
     company: Annotated[Optional[str], typer.Option("--company", "-c", help="Only jobs whose company contains this text (`c` in the app)")] = None,
     state: Annotated[Optional[str], typer.Option(
-        help="Open on this tab: all | not_evaluated | recommended | un_recommended | want_to_apply | applied | not_applied | archived")] = None,
+        help="Open on this tab: recommended (default) | all | not_evaluated | un_recommended | want_to_apply | applied | not_applied | archived")] = None,
     filter_: Annotated[Optional[list[str]], typer.Option("--filter", "-f", help="Only jobs these filters judged, and only their verdicts (repeatable)")] = None,
     directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
     """Browse and review jobs in a full-screen app: tabs per state, details, filter verdicts; decide, rate, set states."""
-    from auto_app.process.job_browser import TABS, JobBrowser, run_browser
+    from auto_app.process.job_browser import TABS, run_browser
     from auto_app.select.filters import FILTERS_DIR, load_filters
 
     if state and state not in TABS:
@@ -501,16 +501,26 @@ def job_browse(
     _require_db(store, "`job browse`")
     _check_themes(cfg)
     fs = load_filters(directory or FILTERS_DIR)  # for "older version" marks; judgments show even if a filter is gone
-    known = {r["filter"] for r in store.judgment_rows()}
-    unknown = [n for n in filter_ or [] if n not in known and n not in fs.filters]
-    if unknown:
-        typer.echo(f"no filter named {unknown} has judged any job (filters: {', '.join(sorted(known)) or 'none'})", err=True)
-        raise typer.Exit(2)
+    _known_filters(store, fs, filter_)
     if not sys.stdout.isatty():
         typer.echo("`job browse` is a full-screen app — run it in a terminal (or use `job list`)", err=True)
         raise typer.Exit(2)
-    run_browser(JobBrowser(store, list(fs.filters.values()), ttl=cfg.jobs.ttl_days, sources=source, company=company,
-                           only_filters=filter_), start=state or "all", ui=cfg.ui)
+    run_browser(_browser(store, cfg, fs, filter_, source=source, company=company), start=state or "recommended", ui=cfg.ui)
+
+
+def _browser(store, cfg: AppConfig, fs, only: list[str] | None, source=None, company=None):
+    from auto_app.process.job_browser import JobBrowser
+
+    return JobBrowser(store, list(fs.filters.values()), ttl=cfg.jobs.ttl_days, sources=source, company=company,
+                      only_filters=only, noise_limit=cfg.select.noise_limit, audit_more=cfg.select.audit_more)
+
+
+def _known_filters(store, fs, names: list[str] | None) -> None:
+    known = {r["filter"] for r in store.judgment_rows()}
+    unknown = [n for n in names or [] if n not in known and n not in fs.filters]
+    if unknown:
+        typer.echo(f"no filter named {unknown} has judged any job (filters: {', '.join(sorted(known)) or 'none'})", err=True)
+        raise typer.Exit(2)
 
 
 @job_app.command("mark")
@@ -765,7 +775,7 @@ def _select(
                + (f"; {rep.skipped_budget} not run (--max-cost reached)" if rep.skipped_budget else ""))
     typer.echo(f"jobs now: {rep.recommended_jobs} recommended, {rep.un_recommended_jobs} un_recommended "
                f"(of those judged this run) · tokens {rep.input_tokens:,} in / {rep.output_tokens:,} out · cost {cost}")
-    typer.echo("review them: auto-app job browse --state recommended · details of one job: auto-app filter why <#>")
+    typer.echo("review them: auto-app job browse · details of one job: auto-app filter why <#>")
 
 
 @filter_app.command("why")
@@ -1204,13 +1214,71 @@ def filter_reparse(
     _select(filter_, None, False, None, None, dry_run, True, directory, config, out)
 
 
+@filter_app.command("audit")
+def filter_audit(
+    filter_: Annotated[Optional[list[str]], typer.Option("--filter", "-f", help="Only these filters (repeatable); default: every filter that has judged a job")] = None,
+    size: Annotated[Optional[int], typer.Option("-n", help="Jobs to draw per filter (default AUTO_APP_SELECT__AUDIT_SIZE, 30)")] = None,
+    directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """Label random samples of each filter's "no" jobs, with the live evaluation panel — measures how often it wrongly rejects."""
+    from auto_app.process.job_browser import run_browser
+    from auto_app.select import audit
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`filter audit`")
+    _check_themes(cfg)
+    if not sys.stdout.isatty():
+        typer.echo("`filter audit` is a full-screen app — run it in a terminal (numbers: `filter eval`)", err=True)
+        raise typer.Exit(2)
+    fs = load_filters(directory or FILTERS_DIR)
+    _known_filters(store, fs, filter_)
+    browser = _browser(store, cfg, fs, filter_)
+    for name in browser.audit_filters():  # a new sample only when the last one is fully labelled
+        if audit.unlabeled_count(store, name) == 0:
+            flt = fs.filters.get(name)
+            d = audit.draw(store, name, size or cfg.select.audit_size, flt.version if flt else None)
+            typer.echo(f"{name}: drew {len(d.jobs)} of {d.pool_size} \"no\" jobs" if d else f"{name}: no unlabelled \"no\" jobs to draw")
+    run_browser(browser, ui=cfg.ui, audit_mode=True)
+
+
+@filter_app.command("eval")
+def filter_eval(
+    filter_: Annotated[Optional[list[str]], typer.Option("--filter", "-f", help="Only these filters (repeatable)")] = None,
+    all_versions: Annotated[bool, typer.Option("--all-versions", help="Also each filter version on its own")] = False,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """How well each filter judges, against your labels: precision, noise, recall, review load, training-data check."""
+    from auto_app.select.evaluate import evaluate, format_eval
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`filter eval`")
+    evals = evaluate(store, filter_, cfg.select.noise_limit)
+    if all_versions:
+        by_filter: dict[str, list[str]] = {}
+        for r in store.judgment_rows():
+            if (not filter_ or r["filter"] in filter_) and r["filter_version"] not in by_filter.setdefault(r["filter"], []):
+                by_filter[r["filter"]].append(r["filter_version"])
+        for name, versions in sorted(by_filter.items()):
+            for v in versions:
+                evals += evaluate(store, [name], cfg.select.noise_limit, version=v)
+    typer.echo(format_eval(evals))
+    typer.echo(f"\nranges: 95% Wilson · training data: one-sided 95% exact bound vs AUTO_APP_SELECT__NOISE_LIMIT "
+               f"({cfg.select.noise_limit:.0%}) · label more: auto-app filter audit")
+
+
 # Subcommands are listed in workflow order, not in the order they're defined above.
 _ORDER = {
     source_app: ["list", "show", "add", "login", "health", "plan"],
     collect_app: ["run", "probe", "stats"],
     process_app: ["parse", "normalize", "dedup"],
     job_app: ["list", "show", "browse", "mark"],
-    filter_app: ["list", "show", "run", "why", "reparse"],
+    filter_app: ["list", "show", "run", "why", "audit", "eval", "reparse"],
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],
 }

@@ -15,7 +15,7 @@ jobs ─────┴─► agent runs the command on the job ─► answer �
                                                                      your decisions train each filter's preference model
 ```
 
-Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 ✅ (review in `auto-app job browse`: decisions, per-filter feedback, `want_to_apply` queue). Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Next: evaluation + audit (S4, §7), then the preference model (S5). Depends on Step 1 (parsed jobs with descriptions; job state from C11).
+Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 ✅ (review in `auto-app job browse`: decisions, per-filter feedback, `want_to_apply` queue); S4 ✅ (judged jobs archived as training data, good / bad labels, `filter audit`, `filter eval`). Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Next: the preference model (S5) — after enough labels and audits. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
 
 ---
 
@@ -218,16 +218,16 @@ To cut cost later, a filter could run a cheap first pass (a single call, no tool
 
 ## 7. Labels, evaluation and the preference model
 
-Each filter has **two judges**: its **agent** (§4) and, later, its **preference model** (§7.5). Both are evaluated the same way, against your labels. Evaluation comes first: it measures the agent, and says whether the cheap labels (un-recommended jobs nobody reviewed) are clean enough to train the model on. Design agreed 2026-10-04; not implemented (milestones S4–S5).
+Each filter has **two judges**: its **agent** (§4) and, later, its **preference model** (§7.5). Both are evaluated the same way, against your labels. Evaluation comes first: it measures the agent, and says whether the cheap labels (un-recommended jobs nobody reviewed) are clean enough to train the model on. Design agreed 2026-10-04. **S4 implemented** (labels, audit, evaluation, archived jobs as training data — `select/audit.py`, `select/evaluate.py`, `core/db/job_ttl.py`); the preference model (S5) not yet, so for now each filter has one judge, and the "both-no" region is the agent's "no" pool.
 
 ### 7.1 The label
 
-Per **job and filter**: *should this filter recommend this job?* — you answer it directly, whatever the judges said:
+Per **job and filter**: *should this filter recommend this job?* — you answer it directly, whatever the judges said. The app words the keys that way ("should recommend" / "shouldn't"), never as "good / bad", which reads like a grade of the filter's verdict:
 
 | key (per filter, in `job browse` / audit) | label |
 |---|---|
-| `g` | **good** job for this filter — it should recommend it |
-| `b` | **bad** job for this filter — it shouldn't |
+| `g` | this filter **should recommend** this job (stored as *good*) |
+| `b` | this filter **shouldn't recommend** it (stored as *bad*) |
 
 Each judge's verdict is then **right or wrong by comparison** (recommend + good = right; no + good = a miss; …). The label is about the **job**, not about a judge or a version, so every version of the agent and of the model is scored against the same labels, and labels stay valid when you edit a command or the model retrains. This replaces S3's "this verdict was right / wrong" ratings (which can't work with two judges that disagree); existing ratings convert exactly (recommend + right → good, recommend + wrong → bad, no + right → bad, no + wrong → good). `a` (want to apply) on a job is a **good** label for every filter whose judges all said no (implied). Your apply / not-apply decision stays a weaker, per-job signal.
 
@@ -255,28 +255,28 @@ Wherever the judges disagree, the filter recommends the job, so you label it any
 
 ### 7.4 Audit — `auto-app filter audit` (interactive)
 
-The **same full-screen app** as `job browse`, opened in audit mode: an **Audit** tab listing a **random sample** of each filter's both-no region, the usual detail pane, and an **evaluation panel** that updates the moment you label a job.
+The **same full-screen app** as `job browse`, opened in audit mode: **only the Audit tab** — a **random sample** of each filter's both-no region, nothing else (pool tabs would invite labelling jobs that weren't drawn at random, and `job browse` has no Audit tab) — the usual detail pane, and an **evaluation panel** that updates the moment you label a job. Its footer lists only what's involved in an audit: no decisions (`a` / `n`), states (`m`) or narrowing (`s` / `c`) — those belong to `job browse`, and they're disabled here too.
 
 ```
- Audit (8 left of 30) · Second look (37) · All · Not evaluated · Recommended · Un-recommended · …          filter: all
+ Audit (8 left of 30)                                                                                    filter: all
 ┌─ Evaluation ───────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ml-engineer   agent v a1b2c3   precision 78% (61–89%) · recall ≈ 49% (31–70%)                               │
 │               model v7 SHADOW  precision 70% (52–84%) · second look 14 labelled → 6 good (43%, 21–67%)      │
-│               both-no region: audited 22/30, 1 good → noise 4.5% (0.8–22%) · ≈19 good jobs lost of 412       │
+│               both-no region: audited 22/30, 1 missed → noise 4.5% (0.8–22%) · ≈19 missed in all of 412      │
 │               if switched on: recall ≈ 63% (+14 pts) · review load +37 jobs (+16%)                          │
-│               un-recommended as training data: NO — noise up to 22% > 5% limit (~38 more clean audits)       │
+│               un-recommended as training data: NO — noise could be 20% > 5% limit (~71 more clean audits)    │
 ├──────────────────────────────────────────────┬─────────────────────────────────────────────────────────────┤
 │ ? 141  Acme      Account Executive, East     │ job #141  Account Executive, East                           │
 │ ? 137  NVIDIA    Solutions Architect, …      │ … (job show details)                                         │
 │ ✓ 122  Stripe    Data Engineer               │ Filters ──────────                                           │
 │ ✗ 118  Datadog   ML Platform Engineer        │ ▸[1] ml-engineer  agent: no (sales role) · model: no 0.08    │
-│                                              │      your label: —                                          │
+│                                              │      you: —                                                 │
 └──────────────────────────────────────────────┴─────────────────────────────────────────────────────────────┘
- g good  b bad  B all filters bad  ←→ filter  a want to apply  d draw more  e panel  u undo  q quit
+ g should recommend  b shouldn't  B no filter should  ←→ filter  u undo  r reason  o link  / search  d draw more  e panel  q quit
 ```
 
 - **Sampling:** `filter audit [-f NAME]… [-n 30]` (or `d` in the app, "draw 10 more") draws uniformly at random from each filter's both-no region, skipping jobs already sampled, and **stores the draw** (with the region's size at that moment). A stored sample can't be cherry-picked — not even by accident — and draws from different weeks combine correctly.
-- **Labelling:** per filter `g` good / `b` bad; `B` labels the job bad for every filter in one key — most audited jobs are obvious rejections, so auditing stays fast. Marks: `?` not labelled, `✓` all bad (the judges were right), `✗` good for some filter (a miss). `u` undoes.
+- **Labelling:** per filter `g` should recommend (a miss) / `b` shouldn't (it rightly said no); `B` = no filter should, in one key — most audited jobs are obvious rejections, so auditing stays fast. After a label the cursor moves on: to the job's next unlabelled filter, else to the next job still to label (labelled jobs sink below, so the cursor doesn't follow them). Marks: `?` not labelled, `✓` all bad (the judges were right), `✗` good for some filter (a miss). `u` undoes.
 - **The evaluation panel** (`e` shows / hides it; also in `job browse`) recomputes after every label — counts and ranges come straight from the database, so it's instant.
 - Sampled jobs stay valid when they expire: judged jobs are archived, not deleted (§7.8).
 - Audit labels are ordinary labels (they also train the model); the sample membership is what makes them usable for unbiased estimates.
@@ -305,7 +305,7 @@ Fixed:
   4. the new version becomes current and **inherits the state** (shadow / on) — retraining never switches a model on, the switch-on rule does;
   5. it **scores the active, undecided jobs** (a new frozen verdict each) — in shadow this refreshes Second look; when on, newly picked jobs go to review;
   6. re-check the switch-on / back-to-shadow rule; refresh the evaluation panel.
-- **Drift check — a significant drop triggers action.** After every scoring, the model's **recent precision** (its last `AUTO_APP_SELECT__DRIFT_WINDOW` = 20 labelled picks of its own — the jobs only it recommended; they move first, being labelled in Second look or review) is compared with its **earlier precision**. A drop counts only if it's beyond chance (the two 95% ranges don't overlap), never a raw point difference — 20 labels swing ±20 points by chance alone. When it fires:
+- **Drift check — a significant drop triggers action.** After every scoring, the model's **recent precision** (its last `AUTO_APP_SELECT__DRIFT_WINDOW` = 20 labelled picks of its own — the jobs only it recommended; they move first, being labelled in Second look or review) is compared with its **earlier precision**. A drop counts only if it's beyond chance (a one-sided two-proportion test — Fisher's exact — at 95%), never a raw point difference — 20 labels swing ±20 points by chance alone. When it fires:
   1. **retrain right away** with whatever new labels exist (even fewer than 10 — they're what shows what changed);
   2. if the new version is still below the switch-on rule, **back to shadow**;
   3. the panel flags it: *"ml-engineer model: recent picks 30% good (15–52%) vs 68% before — retrained, back in shadow; label Second look to recover"*.
@@ -326,7 +326,8 @@ The same numbers as the panel, printed. Per filter — **for the agent, the mode
 | **what the model adds** | good jobs only the model picked vs. bad jobs only the model picked | gain vs. extra review |
 | **noise of the both-no region** | audit samples: good ÷ audited | decides whether unreviewed un-recommended jobs may be training data (§7.7) |
 
-- **Every rate comes with a range** (95% Wilson interval). Rule of thumb: 30 audits with no miss bound the noise at ~10%, 60 at ~5%.
+- **Every rate comes with a range** (95% Wilson interval) — for describing a rate.
+- **Yes / no questions use a one-sided exact bound** (Clopper–Pearson, 95%): "is the noise below the limit?" passes when the one-sided upper bound is under it. With no miss found, 59 audits show the noise is below 5% (30 bound it at ~9.5%); each miss found raises that — 1 → 93, 2 → 124, 3 → 153. Worked example in [study.md](study.md).
 - **Live:** nothing is cached; every label changes the next `filter eval` and the panel immediately.
 - **Two views of the model:** **as used** (default) — each job counts with the verdict of the version that was current when it was judged, all versions pooled: "has the model helped?", with enough data to answer; the switch-on rule and the drift check use this view. **Per version** (`--all-versions`) — only once a version has made enough calls; new versions are covered by the replay test.
 - **Offline replay test** for each new model version: walk through labelled jobs in time order, train on what existed then, score the next batch; compare with baselines (recommend everything, the agent alone, a title-words-only model) on precision-recall AUC and on recall / precision at the chosen threshold (threshold chosen on training data only). Linked duplicates (§7.8) stay on one side of every split. Also checks calibration (are 70% scores right ~70% of the time?).
@@ -339,7 +340,7 @@ The same numbers as the panel, printed. Per filter — **for the agent, the mode
 |---|---|---|
 | recommended jobs you labelled | `g` / `b` | 1 |
 | audited and Second look jobs you labelled | `g` / `b` | 1 |
-| **unreviewed un-recommended jobs** (the agent said no; active and archived) | **no** | **only while the both-no region's noise is below the limit** — its upper bound under `AUTO_APP_SELECT__NOISE_LIMIT` (default 5%); then low weight (from the measured noise), subsampled (e.g. 3 per positive) |
+| **unreviewed un-recommended jobs** (the agent said no; active and archived) | **no** | **only while the both-no region's noise is below the limit** — its one-sided 95% exact upper bound (§7.6) under `AUTO_APP_SELECT__NOISE_LIMIT` (default 5%); then low weight (from the measured noise), subsampled (e.g. 3 per positive) |
 | unreviewed recommended jobs | — | never |
 | jobs no filter judged | — | never |
 
@@ -358,7 +359,7 @@ The model retrains whenever new labels arrive, so its data — and the evaluatio
 
 ## 8. Review
 
-You review in **`auto-app job browse`**, a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below (`job browse --state recommended` opens on the first). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
+You review in **`auto-app job browse`**, a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below; it **opens on Recommended** by default (`--state` picks another tab). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
 
 ```
 ┌ Recommended (23) · Un-recommended (41) · Want to apply (3) ─┬ #28 Research Scientist, AI Accelerator … ───────────────┐
@@ -383,7 +384,7 @@ You review in **`auto-app job browse`**, a **full-screen terminal app** (built w
 
 **Two separate answers**, both optional, saved the moment you press a key:
 1. **Your decision, per job:** `a` → **want to apply** (queued for Step 3), `n` → **not applied**. Available in every list — choosing `a` on an un-recommended job also tells its filters they were wrong to leave it out unless you've rated them otherwise. `u` undoes the last answer.
-2. **Feedback, per filter:** pick a filter (`←` `→` or its number; with one filter, no picking needed) and press `g` (its verdict was **right**) or `b` (**wrong**). *(S4 changes this to a direct per-filter label — `g` good job / `b` bad job for this filter — so it works with two judges, §7.1.)* On a filter that recommended: good / bad recommendation. On one that said no: rightly / wrongly left out. Each rating is a label for **that filter's** preference model only (§7). A short reason can be added (`r`) to either answer.
+2. **Feedback, per filter:** pick a filter (`←` `→` or its number; with one filter, no picking needed) and press `g` (its verdict was **right**) or `b` (**wrong**). *(Since S4: a direct per-filter label — `g` this filter should recommend the job / `b` it shouldn't, whatever it said — so it works with two judges, §7.1; `B`: no filter should.)* Each label is for **that filter's** preference model only (§7). A short reason can be added (`r`) to either answer.
 
 Nothing is submitted anywhere: `want_to_apply` only queues the job; Step 3 applies.
 
@@ -403,10 +404,10 @@ reviews         (review_id PK, job_id, decision, reason, job_text TEXT, created_
 feedback        (job_id, filter, filter_version, verdict BOOLEAN,                    -- the filter's verdict you rated …
                  correct BOOLEAN, reason TEXT, job_text TEXT, created_at,           -- … right / wrong = a label
                  PRIMARY KEY (job_id, filter))                                       -- latest rating per job and filter
-audit_draws     (draw_id PK, filter, filter_version, pool_size, n, created_at)        -- S4: one random draw …
-audit_samples   (draw_id, job_id, filter, PRIMARY KEY (draw_id, job_id))            -- … and the jobs in it
-jobs.duplicate_of (S4)  -- an archived job linked to the archived job it duplicates (§7.8); archived jobs keep their parsed fields
-feedback.label (S4)     -- your per-filter label: good / bad (§7.1), replacing `correct` (converted from the verdict)
+audit_draws     (draw_id PK, filter, filter_version, pool_size, size, drawn_at)       -- S4 ✅: one random draw …
+audit_items     (draw_id, job_id, filter, PRIMARY KEY (draw_id, job_id))            -- … and the jobs in it
+jobs.duplicate_of (S4 ✅)  -- an archived job linked to the archived job it duplicates (§7.8); archived jobs keep their primary posting's parsed fields
+feedback.label (S4 ✅)     -- your per-filter label: good / bad (§7.1); `correct` is now derived (label = verdict), NULL without a verdict
 model_versions  (filter, model_version, trained_at, n_labels, uses_weak_negatives, replay_metrics JSON, state)   -- S5: shadow | on | retired
 model_verdicts  (job_id, filter, model_version, score, threshold, recommend, created_at, PRIMARY KEY (job_id, filter, model_version))  -- S5: frozen per version
 -- S5: preference model state per filter (data/), its scores per job
@@ -425,8 +426,8 @@ auto-app filter run [-f NAME]… [-j JOB]… [--stream] [--limit N] [--rescore] 
 auto-app filter why <JOB_ID> [--trace]                            # each filter's answer, lookups, cost, version (S2 ✅)
 auto-app filter reparse [-f NAME]… [--dry-run]                    # re-read stored answers with the current parsers (S2 ✅)
 auto-app job browse [--state TAB] [-f NAME]… [-s SOURCE]… [-c TEXT]   # review (and browse): decide, rate each filter's verdict (S3 ✅)
-auto-app filter audit [-f NAME]… [-n 30]                          # draw random samples of each filter's both-no region; label them in the app, with the live evaluation panel (S4)
-auto-app filter eval [-f NAME]… [--all-versions] [--rerun]        # agent, model and combined: precision, misses, recall, review load, noise — with ranges (S4; model S5)
+auto-app filter audit [-f NAME]… [-n 30]                          # draw random samples of each filter's both-no region; label them in the app, with the live evaluation panel (S4 ✅)
+auto-app filter eval [-f NAME]… [--all-versions] [--rerun]        # precision, noise, recall, review load, training-data check — with ranges (S4 ✅; --rerun later; model columns S5)
 auto-app filter model on|off -f NAME                              # switch a filter's preference model out of / back into shadow mode (S5)
 auto-app filter train [-f NAME]… [--force]                        # retrain now (normally: on leaving the app / at filter run, ≥ 10 new labels; or on a drift drop) (S5)
 ```
@@ -441,7 +442,7 @@ auto-app filter train [-f NAME]… [--force]                        # retrain no
 | S1 | Filters: folder loader + validation (`command.md`, `filter.yaml`, optional `parser.py`, other files), versions, job-details builder (labelled lines, boilerplate stripped, length cap), `$ARGUMENTS` substitution; `filters` command (list, check, `--job` preview); `filters.example/` committed — ✅ `src/auto_app/select/` |
 | S2 ✅ | Agent judgment: agent runners — our loop on the Claude API, headless Claude Code with your login (`runner: auto`), and DeepSeek for `deepseek-…` models (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
 | S3 ✅ | Review app (Textual; merged into `job browse`): Recommended / Un-recommended / Want to apply lists, detail pane, decisions (`want_to_apply` / `not_applied`), per-filter feedback (`feedback` table), undo, open link; `want_to_apply` state + no-expiry rule; data layer tested without the UI, the app with Textual's test driver — `src/auto_app/select/review.py`, `process/job_browser.py` |
-| S4 | Evaluation + audit: every expired judged job archived as training data, with its parsed fields (fixes the purge bug; never-judged jobs still deleted); dedup within the archive; a re-seen archived listing becomes a new job; stored random audit draws, `filter audit` (the app's Audit tab with a live evaluation panel; `B`, `d`, `e`), per-filter good / bad labels (§7.1, replacing right / wrong), `filter eval` (precision, misses, recall, review load, noise, Wilson ranges) — design §7.1–7.4, 7.6, 7.8 |
+| S4 ✅ | Evaluation + audit: every expired judged job archived as training data, with its parsed fields (fixes the purge bug; never-judged jobs still deleted); dedup within the archive; a re-seen archived listing becomes a new job; stored random audit draws, `filter audit` (the app's Audit tab with a live evaluation panel; `B`, `d`, `e`), per-filter good / bad labels (§7.1, replacing right / wrong), `filter eval` (precision, misses, recall, review load, noise; Wilson ranges, one-sided exact noise test) — design §7.1–7.4, 7.6, 7.8. As built (2026-10-04): noise pooled over a filter's draws × its current "no" count (not weighted per draw); archive dedup by matching keys + same title; `--rerun` later |
 | S5 | Preference model per filter (§7.5): embeddings + calibrated logistic regression, frozen verdicts per model version, batch retraining (≥ 10 new labels, on leaving the app / at `filter run`, `filter train`), drift check (significant drop in recent precision → retrain now, back to shadow if still below the rule), offline replay test, **shadow mode** (Second look tab, automatic switch on / back to shadow), OR with the agent; un-recommended jobs as training data only while the noise is below the limit (§7.7); two-judge scorecard in `filter eval` and the panel |
 
 ## 12. Risks

@@ -49,7 +49,7 @@ def test_expiry_follows_the_latest_posting_and_the_state(db):
     assert db.job(j)["expires_at"][:10] == (utcnow() - timedelta(days=3) + timedelta(days=30)).date().isoformat()
 
 
-def test_unrecommended_and_unevaluated_jobs_are_deleted_with_their_postings(db):
+def test_never_judged_jobs_are_deleted_with_their_postings(db):  # (marked by hand, no filter ran: not training data)
     add(db, "nvidia", "JR2", url=wd("JR2"))
     add(db, "linkedin", "21", apply_url=wd("JR2"))
     add(db, "linkedin", "22", apply_url=wd("JR2") + "?trk=x")  # Level 1b duplicate of 21
@@ -95,9 +95,14 @@ def test_recommended_jobs_are_archived_as_compact_records(db):
     assert a["locations"] == ["santa clara, ca"] and set(a["sources"]) == {"nvidia", "linkedin"}
     assert [p["source_job_id"] for p in a["archive"]["postings"]] == ["JR4", "41"]
     assert db.archived_description(j).startswith("About the role")  # applied: the description is kept
-    # posting identities stay (collect still skips the same listing), heavy data is gone
-    assert db.posting_exists("linkedin", "41") and db.get_parsed(PostingRef("linkedin", "41")) is None
-    assert db.get_posting(PostingRef("linkedin", "41"))["state"] == "archived"
+    # listing identities are freed (a listing seen again becomes a new job); heavy data is gone; what a filter
+    # reads stays on the primary posting (training data)
+    assert not db.posting_exists("linkedin", "41") and not db.posting_exists("nvidia", "JR4")
+    assert db.get_posting(PostingRef("linkedin", f"41#archived{j}"))["state"] == "archived"
+    assert db.get_parsed(PostingRef("linkedin", f"41#archived{j}")) is None  # not the primary posting
+    parsed, locations = db.job_inputs(j)
+    assert parsed["title"] == "Applied Scientist" and locations == ["santa clara, ca"]
+    assert [p["source_job_id"] for p in db.job_postings(j)] == ["JR4", "41"]  # shown with their original ids
     with db.engine.connect() as conn:
         assert conn.execute(select(T.posting_raw)).all() == []
         assert conn.execute(select(T.job_keys).where(T.job_keys.c.job_id == j)).all()  # keys kept for warnings
@@ -223,6 +228,6 @@ def test_job_show_prints_the_description(db, tmp_path, monkeypatch):
     assert "description (" not in CliRunner().invoke(app, ["job", "show", str(j)]).output  # only when asked
     db.set_job_state(j, step2="recommended", decision="applied")
     seen_days_ago(db, "nvidia/JR8", 40)
-    purge(db, AppConfig().retention, ttl=TTL)  # archived: the applied job keeps its description
+    purge(db, AppConfig().retention, ttl=TTL)  # archived: the primary posting's parsed fields are kept
     r = CliRunner().invoke(app, ["job", "show", str(j), "-d"])
-    assert "from the archived record" in r.output and "Build ML systems" in r.output
+    assert "from the primary posting" in r.output and "Build ML systems" in r.output
