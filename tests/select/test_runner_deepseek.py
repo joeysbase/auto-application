@@ -129,3 +129,12 @@ def test_select_routes_deepseek_filters_and_needs_their_key(ds, tmp_path, monkey
     assert r.exit_code == 0 and "web_search isn't available with DeepSeek" in r.output
     r = CliRunner().invoke(cli.app, ["filter", "run", "--dir", str(folder), "--max-cost", "1"])
     assert r.exit_code == 2 and "deepseek-chat" in r.output and "needs a price" in r.output
+
+
+def test_streaming_events_per_turn(ds):
+    events = []
+    api = API([chat("Reading notes.", tool_calls=[call("a", "read_file", {"path": "sponsorship-notes.md"})], finish="tool_calls"),
+               chat('{"recommend": true, "reason": "ok"}')])
+    R.run_deepseek(ds, "P", "k", http=httpx.Client(transport=httpx.MockTransport(api)), on_event=lambda k, d: events.append((k, d)))
+    assert [k for k, _ in events] == ["text", "tool", "tool_result", "text"]
+    assert events[2][1]["ok"] and "Checking visa sponsorship" in events[2][1]["text"]

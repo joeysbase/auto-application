@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -49,7 +50,9 @@ def cli_args(flt, cli: str = "claude", session_id: str | None = None) -> list[st
     if flt.files:
         tools.append("Read")
         allow.append("Read(./**)")
-    args = [cli, "-p", "--output-format", "json", "--model", flt.config.model, "--max-turns", str(flt.config.max_turns),
+    # stream-json: events as they happen (live text for --stream, and every lookup for the trace)
+    args = [cli, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--model", flt.config.model, "--max-turns", str(flt.config.max_turns),
             "--tools", ",".join(tools), "--permission-mode", "dontAsk",
             "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
             "--session-id", session_id or str(uuid.uuid4()), "--system-prompt", SYSTEM]
@@ -59,29 +62,110 @@ def cli_args(flt, cli: str = "claude", session_id: str | None = None) -> list[st
     return args
 
 
-def run_claude_cli(flt, prompt: str, cli: str = "claude", runner=subprocess.run) -> RunResult:
-    """`runner` is subprocess.run, or a fake in tests."""
+def _short(value, n: int = 300) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return text if len(text) <= n else text[:n] + "…"
+
+
+def _tool_result_text(content) -> str:
+    if isinstance(content, list):
+        return " ".join(str(c.get("text", "")) for c in content if isinstance(c, dict))
+    return str(content or "")
+
+
+class _Reader:
+    """Turns Claude Code's stream-json lines into live events, a trace, and the final result."""
+
+    def __init__(self, on_event):
+        self.on_event = on_event
+        self.trace: list[dict] = []
+        self.names: dict[str, str] = {}  # tool_use id → tool name
+        self.result: dict | None = None
+
+    def emit(self, kind, **data):
+        if self.on_event:
+            try:
+                self.on_event(kind, data)
+            except Exception:
+                pass
+
+    def line(self, raw: str) -> None:
+        try:
+            ev = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+        kind = ev.get("type")
+        if kind == "stream_event":
+            e = ev.get("event") or {}
+            d = e.get("delta") or {}
+            if e.get("type") == "content_block_delta" and d.get("type") == "text_delta":
+                self.emit("text", text=d.get("text", ""))
+        elif kind == "assistant":
+            blocks = []
+            for b in (ev.get("message") or {}).get("content") or []:
+                if b.get("type") == "text" and b.get("text"):
+                    blocks.append({"type": "text", "text": _short(b["text"], 2000)})
+                elif b.get("type") == "tool_use":
+                    self.names[b.get("id")] = b.get("name")
+                    blocks.append({"type": "tool_use", "name": b.get("name"), "input": b.get("input")})
+                    self.emit("tool", name=b.get("name"), input=b.get("input"))
+            if blocks:
+                self.trace.append({"turn": len(self.trace) + 1, "blocks": blocks})
+        elif kind == "user":
+            content = (ev.get("message") or {}).get("content")
+            for b in content if isinstance(content, list) else []:
+                if b.get("type") == "tool_result":
+                    name = self.names.get(b.get("tool_use_id"), "tool")
+                    text = _tool_result_text(b.get("content"))
+                    ok = not b.get("is_error")
+                    entry = {"type": "tool_result", "name": name, "error": not ok, "text": _short(text)}
+                    if not self.trace:
+                        self.trace.append({"turn": 1, "blocks": []})
+                    self.trace[-1]["blocks"].append(entry)
+                    self.emit("tool_result", name=name, ok=ok, text=_short(text, 160))
+        elif kind == "result":
+            self.result = ev
+
+
+def run_claude_cli(flt, prompt: str, cli: str = "claude", popen=subprocess.Popen, on_event=None) -> RunResult:
+    """`popen` is subprocess.Popen, or a fake in tests. `on_event` receives live events (`filter run --stream`)."""
     res = RunResult(answer=None, status="ok")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # use the Claude Code login
+    reader = _Reader(on_event)
+    stderr = ""
     try:
         with tempfile.TemporaryDirectory(prefix="auto-app-judge-") as work:  # a clean folder for this one call
             for rel, data in flt.files.items():
                 dest = Path(work) / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
-            proc = runner(cli_args(flt, cli, str(uuid.uuid4())), input=prompt, capture_output=True, text=True,
-                          cwd=work, env=env, timeout=TIMEOUT_S)
+            proc = popen(cli_args(flt, cli, str(uuid.uuid4())), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True, cwd=work, env=env)
+            timer = threading.Timer(TIMEOUT_S, proc.kill)
+            timer.start()
+            try:
+                proc.stdin.write(prompt)
+                proc.stdin.close()
+                for raw in proc.stdout:
+                    reader.line(raw)
+                stderr = proc.stderr.read() if proc.stderr else ""
+                proc.wait()
+            finally:
+                timed_out = not timer.is_alive() and reader.result is None
+                timer.cancel()
+            if timed_out:
+                raise subprocess.TimeoutExpired(cli, TIMEOUT_S)
     except FileNotFoundError:
         res.status, res.error = "error", f"`{cli}` not found — install Claude Code, or set ANTHROPIC_API_KEY"
         return res
     except subprocess.TimeoutExpired:
         res.status, res.error = "error", f"claude timed out after {TIMEOUT_S} s"
         return res
-    try:
-        data = json.loads(proc.stdout)
-    except (json.JSONDecodeError, TypeError):
+    data = reader.result
+    res.trace = [{"turn": 0, "runner": "claude-cli"}] + reader.trace
+    if data is None:
         res.status = "error"
-        res.error = f"claude exit {proc.returncode}: {(proc.stderr or proc.stdout or '').strip()[:400]}"
+        res.error = f"claude exit {proc.returncode}: {(stderr or '').strip()[:400] or 'no result'}"
         return res
     usage = data.get("usage") or {}
     res.input_tokens = (usage.get("input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0) \
@@ -91,11 +175,10 @@ def run_claude_cli(flt, prompt: str, cli: str = "claude", runner=subprocess.run)
     res.web_searches = server.get("web_search_requests") or 0
     res.web_fetches = server.get("web_fetch_requests") or 0
     res.turns = data.get("num_turns") or 0
-    res.tool_calls = max(0, res.turns - 1)  # the CLI reports turns, not tool calls; each tool round adds a turn
+    res.tool_calls = sum(1 for t in reader.trace for b in t["blocks"] if b["type"] == "tool_use")
     res.cost_usd = data.get("total_cost_usd")  # list-price equivalent; billed to your subscription, not per token
-    res.trace = [{"turn": res.turns, "runner": "claude-cli", "subtype": data.get("subtype"), "turns": res.turns,
-                  "stop": data.get("stop_reason"), "permission_denials": data.get("permission_denials") or [],
-                  "blocks": [{"type": "text", "text": (data.get("result") or "")[:2000]}]}]
+    res.trace[0].update(subtype=data.get("subtype"), turns=res.turns, stop=data.get("stop_reason"),
+                        permission_denials=data.get("permission_denials") or [])
     subtype = data.get("subtype")
     if subtype == "error_max_turns":  # out of turns before answering: "couldn't read" → shown to you (high recall)
         res.answer = data.get("result") or None

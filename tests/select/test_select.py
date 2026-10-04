@@ -165,3 +165,18 @@ def test_job_option_judges_exactly_those_jobs_again(env):
     [row] = db.judgment_rows(job_id=jobs["ml"])
     assert row["reason"] == "second look"  # replaced the earlier judgment of the same version
     assert db.job(jobs["sales"])["decision"] == "not_applied"  # judged, but your decision stands
+
+
+def test_stream_shows_each_run_live_one_at_a_time(env):
+    db, folder, jobs = env
+    flt = load_filter(folder / "ml")
+    out = []
+    client = FakeClient(by_title)
+    rep = run_select(db, CFG, [flt], api_runner(client), SelectOptions(stream=True, parallel=3), write=out.append)
+    shown = "".join(out)
+    assert rep.judged == 3 and client.streamed == 3
+    assert shown.count("── #") == 3 and "· ml (claude-sonnet-5)" in shown
+    assert "strong ML fit" in shown and "analyst role" in shown  # the agents' text, live
+    # one at a time: each header is followed by that job's own text before the next header
+    blocks = shown.split("── #")[1:]
+    assert all(("ML Engineer" in b) == ("strong ML fit" in b) for b in blocks)

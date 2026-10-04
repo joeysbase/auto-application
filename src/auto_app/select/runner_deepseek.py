@@ -117,7 +117,16 @@ def _post(http: httpx.Client, base_url: str, key: str, body: dict, retries: int 
 
 
 def run_deepseek(flt, prompt: str, key: str, base_url: str = DEFAULT_BASE_URL, http: httpx.Client | None = None,
-                 fetch=web_fetch) -> RunResult:
+                 fetch=web_fetch, on_event=None) -> RunResult:
+    """on_event: live events (`filter run --stream`) — per turn here: its text, then each tool call and result."""
+
+    def emit(kind, **data):
+        if on_event:
+            try:
+                on_event(kind, data)
+            except Exception:
+                pass
+
     cfg = flt.config
     res = RunResult(answer=None, status="ok")
     own = http is None
@@ -145,6 +154,7 @@ def run_deepseek(flt, prompt: str, key: str, base_url: str = DEFAULT_BASE_URL, h
             turn = {"turn": res.turns, "stop": choice.get("finish_reason"), "blocks": []}
             if msg.get("content"):
                 turn["blocks"].append({"type": "text", "text": _short(msg["content"], 2000)})
+                emit("text", text=msg["content"] + ("\n" if calls else ""))
             res.trace.append(turn)
             if not calls:
                 res.answer = (msg.get("content") or "").strip() or None
@@ -155,6 +165,7 @@ def run_deepseek(flt, prompt: str, key: str, base_url: str = DEFAULT_BASE_URL, h
                 res.tool_calls += 1
                 fn = c.get("function") or {}
                 name = fn.get("name")
+                emit("tool", name=name, input=fn.get("arguments"))
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                     if name == "read_file":
@@ -169,6 +180,7 @@ def run_deepseek(flt, prompt: str, key: str, base_url: str = DEFAULT_BASE_URL, h
                     text, ok = f"error: {e}", False
                 turn["blocks"].append({"type": "tool_use", "name": name, "input": fn.get("arguments")})
                 turn["blocks"].append({"type": "tool_result", "name": name, "error": not ok, "text": _short(text)})
+                emit("tool_result", name=name, ok=ok, text=_short(text, 160))
                 messages.append({"role": "tool", "tool_call_id": c.get("id"), "content": text})
             if (res.turns >= cfg.max_turns - 1 or res.tool_calls >= cfg.max_tool_calls) and not wrap_up_sent:
                 messages.append({"role": "user", "content": WRAP_UP})

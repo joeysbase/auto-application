@@ -645,7 +645,7 @@ auto-app run [-s SOURCE]… [--job-sites|--companies] [--no-collect] [--purge] [
                                                               # collect → parse → normalize → dedup (→ purge); one at a time
 auto-app schedule install --at HH:MM… [--headless] [--dry-run] | show | remove   # macOS launchd: `run --scheduled --purge`
 auto-app job list [-s SOURCE] [-c TEXT] [--state S] [--archived] [--limit N]    # jobs, newest first
-auto-app job show <JOB_ID>                                    # one job in detail
+auto-app job show <JOB_ID> [--description]                   # one job in detail; -d: its full description
 auto-app job mark <JOB_ID>... --as recommended|un_recommended|applied|not_applied|not_evaluated
 auto-app data inspect [SOURCE [JOB_ID]]                       # saved postings
 auto-app data export <source> <job_id> [--to DIR]             # one posting from the database as files

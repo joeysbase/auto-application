@@ -32,6 +32,7 @@ class SelectOptions:
     max_cost: float | None = None  # stop starting new runs once this much (USD) has been spent
     parallel: int = 3
     dry_run: bool = False
+    stream: bool = False  # show each agent's text and lookups live (runs one at a time)
 
 
 @dataclass
@@ -119,8 +120,46 @@ def apply_decisions(store, job_ids, filters: list[Filter], ttl) -> tuple[int, in
     return rec, unrec
 
 
-def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, progress=None) -> SelectReport:
-    """runner(filter, prompt) -> RunResult: `api_runner(client)` or the claude-cli runner."""
+class StreamPrinter:
+    """Formats live events for `filter run --stream`: the agent's text as it's written, lookups on their own lines."""
+
+    def __init__(self, write):
+        self.write = write
+        self.at_line_start = True
+
+    def _line(self, text: str) -> None:
+        if not self.at_line_start:
+            self.write("\n")
+        self.write(text + "\n")
+        self.at_line_start = True
+
+    def header(self, job_id: int, flt: Filter, title: str) -> None:
+        self._line(f"\n── #{job_id} {title[:70]} · {flt.name} ({flt.config.model})")
+
+    def __call__(self, kind: str, data: dict) -> None:
+        if kind == "text":
+            text = data.get("text") or ""
+            if text:
+                self.write(text)
+                self.at_line_start = text.endswith("\n")
+        elif kind == "tool":
+            inp = data.get("input")
+            shown = inp if isinstance(inp, str) else ", ".join(f"{k}={v}" for k, v in (inp or {}).items())
+            self._line(f"  → {data.get('name')}: {str(shown)[:150]}")
+        elif kind == "tool_result":
+            mark = "✓" if data.get("ok", True) else "✗"
+            preview = " ".join(str(data.get("text") or "").split())  # one line, whatever the tool returned
+            self._line(f"    {mark} {preview[:150]}")
+
+    def end(self) -> None:
+        if not self.at_line_start:
+            self.write("\n")
+            self.at_line_start = True
+
+
+def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, progress=None, write=None) -> SelectReport:
+    """runner(filter, prompt[, on_event]) -> RunResult: `api_runner(client)`, the claude-cli or DeepSeek runner.
+    With opts.stream, `write(text)` shows each run live (runs then go one at a time)."""
     rep = SelectReport()
     pairs = plan(store, filters, opts)
     rep.planned = [(job_id, flt.name) for job_id, flt in pairs]
@@ -139,11 +178,19 @@ def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, p
 
     prompts = [(job_id, flt, prepare(job_id, flt)) for job_id, flt in pairs]
 
+    printer = StreamPrinter(write) if opts.stream and write else None
+    titles = {j["job_id"]: j.get("title") or "" for j in store.jobs(archived=None)} if printer else {}
+
     def work(job_id: int, flt: Filter, prompt: str):
         with lock:
             if opts.max_cost is not None and spent[0] >= opts.max_cost:
                 return job_id, flt, None
-        result = runner(flt, prompt)
+        if printer:
+            printer.header(job_id, flt, titles.get(job_id, ""))
+            result = runner(flt, prompt, on_event=printer)
+            printer.end()
+        else:
+            result = runner(flt, prompt)
         cost = result.cost_usd if result.cost_usd is not None else \
             cfg.select.cost(flt.config.model, result.input_tokens, result.output_tokens, result.web_searches)
         with lock:
@@ -151,7 +198,7 @@ def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, p
         return job_id, flt, (result, cost)
 
     touched = []
-    with ThreadPoolExecutor(max_workers=max(1, opts.parallel)) as pool:
+    with ThreadPoolExecutor(max_workers=1 if printer else max(1, opts.parallel)) as pool:
         futures = [pool.submit(work, job_id, flt, prompt) for job_id, flt, prompt in prompts if prompt]
         for fut in as_completed(futures):
             job_id, flt, done = fut.result()

@@ -609,6 +609,7 @@ def _select(
     config: ConfigOpt = None,
     out: OutOpt = None,
     jobs: list[int] | None = None,
+    stream: bool = False,
 ):
     """Step 2: run your filters' agents on active, undecided jobs and mark them recommended / un_recommended."""
     from auto_app.select.engine import SelectOptions, reparse as do_reparse, run_select
@@ -624,7 +625,9 @@ def _select(
             typer.echo(f"\n{len(changes)} judgments {'would change' if dry_run else 'changed'}")
         return
     opts = SelectOptions(filters=filter_, jobs=jobs, limit=limit, rescore=rescore, max_cost=max_cost,
-                         parallel=parallel or cfg.select.parallel, dry_run=dry_run)
+                         parallel=parallel or cfg.select.parallel, dry_run=dry_run, stream=stream)
+    if stream and not dry_run and (parallel or cfg.select.parallel) > 1:
+        typer.echo("--stream: running one job at a time so the output stays readable")
     if jobs:
         from auto_app.select.engine import applies
 
@@ -677,7 +680,7 @@ def _select(
                            f"is not set — put it in .env", err=True)
                 raise typer.Exit(2)
             base = cfg.select.deepseek_base_url
-            deepseek_runner = lambda flt, prompt: run_deepseek(flt, prompt, deepseek_key, base)  # noqa: E731
+            deepseek_runner = lambda flt, prompt, **kw: run_deepseek(flt, prompt, deepseek_key, base, **kw)  # noqa: E731
             typer.echo(f"runner for {[f.name for f in deepseek_filters]}: DeepSeek API (DEEPSEEK_API_KEY)")
         if claude_filters:
             if kind == "api":
@@ -695,13 +698,14 @@ def _select(
                     typer.echo(f"no ANTHROPIC_API_KEY and no `{cli}` CLI found — put the key in .env, or install "
                                f"Claude Code and log in (or set AUTO_APP_SELECT__CLAUDE_CLI to its path)", err=True)
                     raise typer.Exit(2)
-                claude_runner = lambda flt, prompt: run_claude_cli(flt, prompt, cli)  # noqa: E731
+                claude_runner = lambda flt, prompt, **kw: run_claude_cli(flt, prompt, cli, **kw)  # noqa: E731
                 typer.echo(f"runner: Claude Code CLI (`{cli}`, your login — usage counts against your subscription)")
 
-        def runner(flt, prompt):
-            return (deepseek_runner if is_deepseek(flt.config.model) else claude_runner)(flt, prompt)
+        def runner(flt, prompt, **kw):
+            return (deepseek_runner if is_deepseek(flt.config.model) else claude_runner)(flt, prompt, **kw)
 
-    rep = run_select(store, cfg, chosen, runner, opts, progress=typer.echo)
+    rep = run_select(store, cfg, chosen, runner, opts, progress=typer.echo,
+                     write=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
     jobs = len({j for j, _ in rep.planned})
     if not rep.planned:
         typer.echo("nothing to judge" + (" for those jobs" if jobs else
@@ -1077,9 +1081,26 @@ def job_list(
 
 
 @job_app.command("show")
-def job_show(job_id: Annotated[int, typer.Argument(help="Job number")], out: OutOpt = None):
+def job_show(
+    job_id: Annotated[int, typer.Argument(help="Job number")],
+    description: Annotated[bool, typer.Option("--description", "-d", help="Also print the job's full description")] = False,
+    out: OutOpt = None,
+):
     """One job: details, state and expiry, its postings and how they matched, its matching keys."""
     _jobs(job_id, None, None, None, False, None, out)
+    if description:
+        store = _store(out)
+        parsed, _ = store.job_inputs(job_id)
+        text, where = (parsed or {}).get("description_text") or "", "the primary posting"
+        if not text and (store.job(job_id) or {}).get("archived_at"):
+            text, where = store.archived_description(job_id), "the archived record"
+        if text:
+            typer.echo(f"\ndescription ({len(text):,} chars, from {where}):\n")
+            from auto_app.select.job_details import join_bullets
+
+            typer.echo(join_bullets(text).strip())
+        else:
+            typer.echo("\nno description saved for this job (archived jobs keep it only if you applied)")
 
 
 @source_app.command("list")
@@ -1124,12 +1145,13 @@ def filter_run(
     max_cost: Annotated[Optional[float], typer.Option("--max-cost", help="Stop starting new runs after this many USD")] = None,
     parallel: Annotated[Optional[int], typer.Option(help="Agent runs at once (default: AUTO_APP_SELECT__PARALLEL)")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be judged; run nothing")] = False,
+    stream: Annotated[bool, typer.Option("--stream", help="Show each agent's text and lookups live (runs one job at a time)")] = False,
     directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
     """Run your filters' agents on active, undecided jobs (or the --job ones) and mark them recommended / un_recommended."""
-    _select(filter_, limit, rescore, max_cost, parallel, dry_run, False, directory, config, out, jobs=job)
+    _select(filter_, limit, rescore, max_cost, parallel, dry_run, False, directory, config, out, jobs=job, stream=stream)
 
 
 @filter_app.command("reparse")

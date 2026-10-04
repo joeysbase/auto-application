@@ -9,6 +9,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-04 | `filter run --stream` (live text + lookups, one job at a time); CLI runner reads Claude Code's event stream, so `filter why` shows its lookups | 2 | ✅ done (verified live) | [2026-10-04-filter-run-stream](2026-10-04-filter-run-stream.md) |
 | 2026-10-03 | Commands grouped: `auto-app source · collect · process · job · filter · data <command>` (+ `run`, `schedule`); old names removed | 1–2 | ✅ done | [2026-10-03-command-groups](2026-10-03-command-groups.md) |
 | 2026-10-03 | Step 2: DeepSeek runner — `deepseek-…` models with `DEEPSEEK_API_KEY` (our web_fetch; no web_search) | 2 | ✅ done (offline-tested) | [2026-10-03-deepseek-runner](2026-10-03-deepseek-runner.md) |
 | 2026-10-03 | Step 2: `claude-cli` runner (your Claude Code login, no API key; locked down; `runner: auto` default) | 2 | ✅ done (verified live) | [2026-10-03-claude-cli-runner](2026-10-03-claude-cli-runner.md) |

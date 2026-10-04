@@ -416,6 +416,7 @@ With a job number, it shows that job:
 | `--state S` | `not_evaluated`, `un_recommended`, `recommended` (undecided), `applied` or `not_applied` |
 | `--archived` | archived job records instead of active jobs |
 | `--limit N` | only the newest N jobs |
+| `-d/--description` (`job show`) | also print the job's **full description** (its primary posting's text, as saved; for an archived job you applied to, the kept copy) |
 
 ```bash
 uv run auto-app job list
@@ -423,6 +424,7 @@ uv run auto-app job list -s nvidia --limit 20
 uv run auto-app job list --state applied
 uv run auto-app job list --archived
 uv run auto-app job show 28
+uv run auto-app job show 28 --description
 ```
 
 #### `job mark JOB_ID... --as STATE`
@@ -485,11 +487,12 @@ Every answer is stored with the trace (each lookup), tokens, tool calls and cost
 | `--max-cost USD` | stop starting new runs once this much was spent (runs already going finish). With the `api` runner it needs prices for the filters' models in `AUTO_APP_SELECT__PRICES`; with `claude-cli` it uses Claude Code's reported cost |
 | `--parallel N` | agent runs at once (default `AUTO_APP_SELECT__PARALLEL`, 3) |
 | `--dry-run` | list what would be judged; run nothing |
+| `--stream` | watch each agent work live: a header per job, its text as it's written, each lookup (`→ WebSearch: …`) and its result (`✓ …`), then the verdict line. Runs go one job at a time (so the output stays readable) |
 | `--dir PATH` | another filters folder |
 
 **Who runs the agent** (`AUTO_APP_SELECT__RUNNER` in `.env`, default `auto`):
 - **`api`** — the Claude API with `ANTHROPIC_API_KEY` (from `.env` or your shell); billed per token; cost from `AUTO_APP_SELECT__PRICES`. Full trace of every lookup.
-- **`claude-cli`** — your **Claude Code login** (`claude -p`, headless), no API key: usage counts against your Claude subscription. Each run is **a brand-new Claude Code session with no context from earlier runs** — a fresh session id, nothing saved, none of your Claude Code settings or memory, in a new temporary folder (deleted afterwards) holding only copies of the filter's own files, so no `CLAUDE.md` or other project file can be picked up — locked down to the same abilities: only WebSearch / WebFetch / Read exist, anything not allowed is denied (`dontAsk`), Read is limited to the folder (not `command.md`, `filter.yaml`, `parser.py`), WebFetch to linkedin.com is denied, none of your Claude Code settings, hooks, MCP servers or commands are loaded, and nothing is saved as a session. The cost shown is Claude Code's list-price equivalent. `filter why` shows the answer but not each lookup (Claude Code's JSON output doesn't list them).
+- **`claude-cli`** — your **Claude Code login** (`claude -p`, headless), no API key: usage counts against your Claude subscription. Each run is **a brand-new Claude Code session with no context from earlier runs** — a fresh session id, nothing saved, none of your Claude Code settings or memory, in a new temporary folder (deleted afterwards) holding only copies of the filter's own files, so no `CLAUDE.md` or other project file can be picked up — locked down to the same abilities: only WebSearch / WebFetch / Read exist, anything not allowed is denied (`dontAsk`), Read is limited to the folder (not `command.md`, `filter.yaml`, `parser.py`), WebFetch to linkedin.com is denied, none of your Claude Code settings, hooks, MCP servers or commands are loaded, and nothing is saved as a session. The cost shown is Claude Code's list-price equivalent. `filter why` shows each lookup, as for the API runner (read from Claude Code's event stream).
 - **`auto`** — `api` when `ANTHROPIC_API_KEY` is set, otherwise `claude-cli`.
 - **DeepSeek** — chosen per filter by its model: a filter with `model: deepseek-chat` (or any `deepseek-…`) runs on DeepSeek's API with `DEEPSEEK_API_KEY` (in `.env`), whatever the setting above. Same loop, budget and output; `read_file` as usual; `web_fetch` is done by the app (linkedin.com and local / private network addresses refused, every redirect checked, 2 MB / 20 s limits, pages as plain text); **`web_search` isn't available** with DeepSeek (`filter run` says so and runs without it). For cost tracking and `--max-cost`, add the model's price to `AUTO_APP_SELECT__PRICES`. Filters on different providers can run in the same `filter run`.
 
@@ -500,6 +503,7 @@ uv run auto-app filter run --dry-run --limit 30
 uv run auto-app filter run --limit 30 --max-cost 2      # a first trial
 uv run auto-app filter run -f ml-engineer --rescore      # after editing that filter's command
 uv run auto-app filter run --job 28                      # just job 28 (again, if already judged)
+uv run auto-app filter run --job 28 --stream             # … and watch the agent work
 ```
 Output: one line per judgment (`#28 ml-engineer recommend — reason`), then totals: recommend / no / couldn't read / errors, how many jobs are now recommended or un_recommended, tokens and cost.
 

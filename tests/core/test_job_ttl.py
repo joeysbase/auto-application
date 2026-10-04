@@ -208,3 +208,21 @@ def test_a_failing_migration_changes_nothing(tmp_path, monkeypatch):
         E.upgrade(engine)
     cols = [r[1] for r in sqlite3.connect(tmp_path / "old.db").execute("PRAGMA table_info(jobs)")]
     assert "status" in cols and "step2" not in cols  # rolled back completely
+
+
+def test_job_show_prints_the_description(db, tmp_path, monkeypatch):
+    from auto_app.cli import app
+
+    monkeypatch.setenv("AUTO_APP_HOME", str(tmp_path))
+    add(db, "nvidia", "JR8", url=wd("JR8"), desc="About the role\n-\nBuild ML systems\nWe are an equal opportunity employer.")
+    run(db)
+    j = job_of(db, "nvidia/JR8")
+    r = CliRunner().invoke(app, ["job", "show", str(j), "--description"])
+    assert r.exit_code == 0 and "from the primary posting" in r.output
+    assert "- Build ML systems" in r.output and "equal opportunity employer" in r.output  # full text, bullets joined
+    assert "description (" not in CliRunner().invoke(app, ["job", "show", str(j)]).output  # only when asked
+    db.set_job_state(j, step2="recommended", decision="applied")
+    seen_days_ago(db, "nvidia/JR8", 40)
+    purge(db, AppConfig().retention, ttl=TTL)  # archived: the applied job keeps its description
+    r = CliRunner().invoke(app, ["job", "show", str(j), "-d"])
+    assert "from the archived record" in r.output and "Build ML systems" in r.output

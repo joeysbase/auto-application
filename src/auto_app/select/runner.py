@@ -99,10 +99,32 @@ def _trace_block(block) -> dict | None:
 
 def api_runner(client):
     """A runner for `run_select`: the API loop with this client."""
-    return lambda flt, prompt: run_agent(client, flt, prompt)
+    return lambda flt, prompt, on_event=None: run_agent(client, flt, prompt, on_event)
 
 
-def run_agent(client, flt, prompt: str) -> RunResult:
+def _emit(on_event, kind: str, **data) -> None:
+    """Live events for `filter run --stream`: text (as it's written), tool (a lookup starts), tool_result."""
+    if on_event:
+        try:
+            on_event(kind, data)
+        except Exception:  # a display problem must never break a run
+            log.debug("stream display failed", exc_info=True)
+
+
+def _create(client, kwargs: dict, on_event):
+    """One model call; with on_event, streamed — text deltas are emitted as they arrive."""
+    if on_event is None:
+        return client.messages.create(**kwargs)
+    with client.messages.stream(**kwargs) as stream:
+        for event in stream:
+            if _attr(event, "type") == "content_block_delta":
+                delta = _attr(event, "delta")
+                if _attr(delta, "type") == "text_delta":
+                    _emit(on_event, "text", text=_attr(delta, "text", ""))
+        return stream.get_final_message()
+
+
+def run_agent(client, flt, prompt: str, on_event=None) -> RunResult:
     cfg = flt.config
     res = RunResult(answer=None, status="ok")
     messages: list[dict] = [{"role": "user", "content": prompt}]
@@ -116,7 +138,7 @@ def run_agent(client, flt, prompt: str) -> RunResult:
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = {"type": "none"} if out_of_budget else {"type": "auto"}
-            resp = client.messages.create(**kwargs)
+            resp = _create(client, kwargs, on_event)
             res.turns += 1
             usage = _attr(resp, "usage")
             res.input_tokens += _attr(usage, "input_tokens", 0) or 0
@@ -128,6 +150,13 @@ def run_agent(client, flt, prompt: str) -> RunResult:
             res.trace.append({"turn": res.turns, "stop": _attr(resp, "stop_reason"),
                               "blocks": [b for b in map(_trace_block, content) if b]})
             res.tool_calls += sum(1 for b in content if _attr(b, "type") == "server_tool_use")
+            for b in content:
+                if _attr(b, "type") in ("server_tool_use", "tool_use"):
+                    _emit(on_event, "tool", name=_attr(b, "name"), input=_attr(b, "input"))
+                elif _attr(b, "type") in ("web_search_tool_result", "web_fetch_tool_result"):
+                    tb = _trace_block(b) or {}
+                    _emit(on_event, "tool_result", name=_attr(b, "type").replace("_tool_result", ""),
+                          ok=not tb.get("error"), text=_short(tb.get("results") or tb.get("url") or tb.get("error"), 160))
             texts += [_attr(b, "text", "") for b in content if _attr(b, "type") == "text"]
             stop = _attr(resp, "stop_reason")
             if stop == "pause_turn":  # a long server-side tool call: hand the turn back as-is
@@ -149,6 +178,7 @@ def run_agent(client, flt, prompt: str) -> RunResult:
                                     "is_error": is_error})
                     res.trace[-1]["blocks"].append({"type": "tool_result", "name": _attr(b, "name"),
                                                     "error": is_error, "text": _short(text)})
+                    _emit(on_event, "tool_result", name=_attr(b, "name"), ok=not is_error, text=_short(text, 160))
                 messages.append({"role": "assistant", "content": content})
                 user = list(results)
                 if (res.turns >= cfg.max_turns - 1 or res.tool_calls >= cfg.max_tool_calls) and not wrap_up_sent:

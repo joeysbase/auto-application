@@ -88,3 +88,20 @@ def test_convention_parser():
     assert parse_answer(ML, None).error == "the agent gave no answer"
     assert parse_answer(VF, "Verdict: maybe\nReason: close").output.model_dump() == {"recommend": True, "reason": "close"}
     assert parse_answer(VF, "nothing").output.recommend is None and parse_answer(VF, "x").parser.startswith("parser.py:")
+
+
+def test_streaming_emits_text_as_it_arrives_and_each_lookup():
+    events = []
+    client = FakeClient([
+        response(text("Let me check the notes."), tool_use("read_file", {"path": "sponsorship-notes.md"}), stop="tool_use"),
+        answer(True, "sponsors"),
+    ])
+    res = run_agent(client, ML, "P", on_event=lambda k, d: events.append((k, d)))
+    assert client.streamed == 2  # streamed calls, not plain ones
+    texts = [d["text"] for k, d in events if k == "text"]
+    assert len(texts) > 2 and "".join(texts).startswith("Let me check the notes.")  # arrives in pieces
+    kinds = [k for k, _ in events]
+    assert kinds.index("tool") < kinds.index("tool_result")
+    assert [d for k, d in events if k == "tool"][0] == {"name": "read_file", "input": {"path": "sponsorship-notes.md"}}
+    assert parse_answer(ML, res.answer).output.recommend is True
+    assert FakeClient([answer(True)]).streamed == 0  # without on_event: plain calls
