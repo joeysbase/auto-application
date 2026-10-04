@@ -17,7 +17,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
   - [`collect`](#collect--step-1a-run-the-searches) — `run`, `probe`, `stats`
   - [`process`](#process--step-1b-postings--jobs) — `parse`, `normalize`, `dedup`
   - [`run` and `schedule`](#run-and-schedule--all-of-step-1-automatically)
-  - [`job`](#job--the-job-pool) — `list`, `show`, `mark`
+  - [`job`](#job--the-job-pool) — `list`, `show`, `browse`, `mark`
   - [`filter`](#filter--step-2-judge-jobs-with-your-filters) — `list`, `show`, `run`, `why`, `reparse`
   - [`data`](#data--storage) — `inspect`, `export`, `import`, `purge`
 - [Where the data goes](#where-the-data-goes)
@@ -51,7 +51,8 @@ Job sites use your installed **Google Chrome** (fallback: `uv run playwright ins
 | **Sighting** | One card / list entry a search run saw, with its outcome: `fetched`, `known`, `filtered`, `budget_skipped`, `fetch_failed`, `cards_only` |
 | **Posting** | One listing on one source, saved once. States: `fetched` → `parsed` (or `parse_failed`) → `normalized` → `linked` |
 | **Job** | The real opening; one or more postings (from any sources, any locations) linked by dedup |
-| **Job state** | Step 2's verdict (`recommended` / `un_recommended`) and your decision (`applied` / `not_applied`); a new job is *not evaluated*. Set by Steps 2–3 later, by hand now with `auto-app job mark` |
+| **Job state** | Step 2's verdict (`recommended` / `un_recommended`, set by `filter run`) and your decision — `want_to_apply` (queued for Step 3) or `not_applied`, set when you review in `job browse`; `applied` will be set by Step 3. A new job is *not evaluated*. Any state can also be set by hand with `auto-app job mark` |
+| **Feedback** | in `job browse`, your rating of one filter's verdict on one job — right or wrong. Kept per filter: the training labels for that filter's preference model (later) |
 | **Job TTL** | A job expires `AUTO_APP_JOBS__TTL_DAYS__*` days (in `.env`) after its postings were last seen: not-evaluated / un-recommended jobs are **deleted** (with their postings), recommended ones **archived** (kept as a record, left out of dedup) |
 
 ## Configuration
@@ -102,6 +103,7 @@ AUTO_APP_SELECT__PARALLEL=3
 AUTO_APP_SELECT__PRICES={"claude-haiku-4-5-20251001": {"input_per_mtok": 1.0, "output_per_mtok": 5.0}}
 AUTO_APP_RUN_WINDOW__START=08:00                 # also RUN_WINDOW__END, MIN_HOURS_BETWEEN_RUNS, RETRY__…
 AUTO_APP_DEBUG_FILES=false                       # true = files under data/raw/ instead of the database
+AUTO_APP_UI__THEME=auto                          # full-screen apps: follow the system's light / dark mode; or a theme name
 ```
 
 - **Inheritance:** a field left out comes from the search named in `from` (if any), else from `defaults`. `from` copies only the generic fields (keywords, locations, dates, types, levels, pages, card filters) — never `site_url` or `site_filters`. Setting a field overrides the copy; an empty list (`experience_levels: []`) clears it.
@@ -126,6 +128,7 @@ uv run auto-app source add https://jobs.ashbyhq.com/uipath    # writes plugins/c
 uv run auto-app source plan                                   # check what will run
 uv run auto-app run --max-pages 1                             # a small first run: collect → parse → normalize → dedup
 uv run auto-app job list                                      # the result
+uv run auto-app job browse                                    # … or browse it in a full-screen app
 ```
 
 **Every day**
@@ -141,7 +144,8 @@ uv run auto-app filter list                                   # problems / warni
 uv run auto-app filter show ml-engineer --job 28              # exactly what the agent gets for job 28
 uv run auto-app filter run --limit 10 --max-cost 1            # a first trial
 uv run auto-app filter why 28                                 # how job 28 was judged
-uv run auto-app job list --state recommended
+uv run auto-app job browse --state recommended               # review: decide, and rate each filter's verdicts
+uv run auto-app job list --state want_to_apply               # your queue for Step 3
 ```
 
 **Checking a new site or company**
@@ -398,7 +402,7 @@ uv run auto-app schedule remove
 #### `job list` · `job show JOB_ID`
 Lists active jobs, newest posting date first, sized to your terminal:
 
-- one row per job: number, posted date, company (as the posting shows it), title, where (`Austin, TX +2`), the sources it was found on (`linkedin, nvidia`), and when it **expires** (`in 12d`; `due` = the next purge deletes or archives it; `!` = recommended and undecided, archived within 3 days);
+- one row per job: number, posted date, company (as the posting shows it), title, where (`Austin, TX +2`), the sources it was found on (`linkedin, nvidia`), and when it **expires** (`in 12d`; `due` = the next purge deletes or archives it; `!` = recommended and undecided, archived within 3 days; `queued` = want to apply, never expires while waiting for Step 3);
 - a state column appears once jobs are in different states; ⚠ marks a repost warning;
 - the summary line counts the jobs found on more than one source.
 
@@ -413,7 +417,7 @@ With a job number, it shows that job:
 |---|---|
 | `-s/--source NAME` (repeatable) | only jobs found on this source |
 | `-c/--company TEXT` | only jobs whose company contains this text |
-| `--state S` | `not_evaluated`, `un_recommended`, `recommended` (undecided), `applied` or `not_applied` |
+| `--state S` | `not_evaluated`, `un_recommended`, `recommended` (undecided), `want_to_apply`, `applied` or `not_applied` |
 | `--archived` | archived job records instead of active jobs |
 | `--limit N` | only the newest N jobs |
 | `-d/--description` (`job show`) | also print the job's **full description** (its primary posting's text, as saved; for an archived job you applied to, the kept copy) |
@@ -422,16 +426,82 @@ With a job number, it shows that job:
 uv run auto-app job list
 uv run auto-app job list -s nvidia --limit 20
 uv run auto-app job list --state applied
+uv run auto-app job list --state want_to_apply
 uv run auto-app job list --archived
 uv run auto-app job show 28
 uv run auto-app job show 28 --description
 ```
 
+#### `job browse`
+The job pool in a **full-screen app** (in your terminal) — and where you **review** what your filters found: decide on each job, and tell each filter whether it judged right. Every key saves at once; nothing is submitted anywhere.
+
+```
+ All (64) · Not evaluated (12) · [Recommended (23)] · Un-recommended (41) · Want to apply (3) · Applied · Not applied · Archived
+┌───────────────────────────────────────────────────────────┬─────────────────────────────────────────────────┐
+│ ★ 17  RemoteHunter  Data Scientist, …  want to apply  …   │ job #28  Research Scientist, AI Accelerator     │
+│   28  NVIDIA        Research Scientist recommended in 14d │   company  NVIDIA · where Austin, TX · …        │
+│ ✗ 15  Amazon        Applied Scientist  not applied    👎  │   postings (2) … matching keys …                │
+│                                                           │ Filters ──────────                              │
+│                                                           │ ▸[1] ml-engineer   recommend · 👍 right          │
+│                                                           │     strong ML systems fit; sponsors H-1B        │
+│                                                           │     looked up: web_search: NVIDIA H-1B …        │
+│                                                           │  [2] research      no · (not rated)             │
+│                                                           │ Description ──────────                          │
+└───────────────────────────────────────────────────────────┴─────────────────────────────────────────────────┘
+```
+
+- **Tabs** (`tab` / `shift+tab`): All · Not evaluated · **Recommended** (undecided — the ones to decide on) · **Un-recommended** (undecided, every filter said no — to catch wrong rejections) · **Want to apply** (your queue for Step 3 — to review or withdraw) · Applied · Not applied · Archived. Newest first; columns: mark (★ want to apply, ✗ not applied, ✓ applied), number, company, title, posted, state, expires, 👍 / 👎 your feedback. A job you answer stays in its tab (with its mark) until you leave the app, so you can change your mind.
+- **Detail pane** (right; scrolls): everything `job show` prints — company, places, dates, apply link, state, expiry, repost warnings, each posting and how it joined the job, matching keys — then **every filter that judged the job**: its verdict, reason, what it looked up, your feedback so far (`older version` = judged before you last edited that filter); then the description (for an archived job you applied to: the copy kept with the record).
+- **Archived records are read-only.**
+
+| Key | |
+|---|---|
+| `↑` `↓` | move through the jobs |
+| `a` | **want to apply** — queues the job for Step 3 (it never expires while queued). On a job some filter said no to, also rates those filters **wrong** (unless you've rated them yourself) |
+| `n` | **not apply** |
+| `←` `→` or `1`–`9` | pick a filter (marked ▸) when several judged the job |
+| `g` / `b` | that filter's verdict was **right** / **wrong** — a label for that filter's preference model only; rating again replaces it |
+| `m` | **set any state** — a menu: want to apply, applied, not applied, recommended, un-recommended, not evaluated (same rules as `job mark`) |
+| `r` | add a short reason to your last answer on this job |
+| `u` | undo your last change (any job, `m` included) |
+| `o` | open the job's link in your browser |
+| `/` | search title / company / source / job number (`Esc` clears) |
+| `s` / `c` | show only jobs from these sources (comma-separated) / whose company contains this text; clear the box for all |
+| `q` | quit |
+
+What's saved: your decision on the job (its state, as `job list --state` shows), a `reviews` row per `a` / `n`, and a `feedback` row per (job, filter) with the filter's version and verdict — both keep the job's title, company and description, so they outlive the job's TTL.
+
+| Option | |
+|---|---|
+| `--state TAB` | open on this tab: `all` (default), `not_evaluated`, `recommended`, `un_recommended`, `want_to_apply`, `applied`, `not_applied`, `archived` |
+| `-f/--filter NAME` (repeatable) | only jobs these filters judged, and only their verdicts |
+| `-s/--source NAME` (repeatable) | start narrowed to these sources |
+| `-c/--company TEXT` | start narrowed to this company |
+| `--dir PATH` | another filters folder (for the "older version" marks) |
+
+```bash
+uv run auto-app job browse --state recommended          # review what filter run recommended
+uv run auto-app job browse --state recommended -f ml-engineer
+uv run auto-app job browse --state want_to_apply
+uv run auto-app job browse -s nvidia
+```
+`job list` / `job show` stay plain text (for scripts and pipes).
+
+**Colors:** by default the app **follows your system's light / dark mode**, and switches while open when you change it (macOS, Linux/GNOME, Windows). Set in `.env`:
+
+| Setting | |
+|---|---|
+| `AUTO_APP_UI__THEME` | `auto` (default) or a fixed Textual theme: `textual-light`, `textual-dark`, `ansi-light` / `ansi-dark` (your terminal's own colors), `solarized-light`, `catppuccin-latte`, `nord`, `dracula`, `tokyo-night`, … (an unknown name lists them all) |
+| `AUTO_APP_UI__LIGHT_THEME` / `AUTO_APP_UI__DARK_THEME` | what `auto` uses in light / dark mode (default `textual-light` / `textual-dark`) |
+
+`ctrl+p` → "theme" in the app tries a theme for that session.
+
 #### `job mark JOB_ID... --as STATE`
-Sets jobs' state by hand — what Steps 2 and 3 will do once they exist: `recommended`, `un_recommended`, `applied`, `not_applied` (both also mark the job recommended) or `not_evaluated` (clears it). The state decides the job's TTL (`AUTO_APP_JOBS__TTL_DAYS__*` in `.env`), so e.g. marking a job `applied` keeps it 30 days after it was last seen and then archives it instead of deleting it. Archived jobs can't be changed.
+Sets jobs' state by hand (in the app: `m` in `job browse`) — normally `filter run`, your review in `job browse` and (later) Step 3 do it: `recommended`, `un_recommended`, `want_to_apply`, `applied`, `not_applied` (the last three keep Step 2's verdict, or mark the job recommended if it has none) or `not_evaluated` (clears it). The state decides the job's TTL (`AUTO_APP_JOBS__TTL_DAYS__*` in `.env`), so e.g. marking a job `applied` keeps it 30 days after it was last seen and then archives it instead of deleting it; a `want_to_apply` job never expires while it waits for Step 3. Archived jobs can't be changed.
 
 ```bash
 uv run auto-app job mark 28 --as applied
+uv run auto-app job mark 31 --as want_to_apply
 uv run auto-app job mark 12 13 14 --as un_recommended
 ```
 Output: one line per job with its new state and expiry date.
@@ -474,7 +544,7 @@ Runs each filter's agent on **active, undecided** jobs it hasn't judged yet and 
 
 1. the command is run with the job's details (what `filter show NAME --job N` shows), by an agent that may use the filter's `tools` — web search / web fetch (**linkedin.com blocked**) — and read files in its own folder, within `max_turns` / `max_tool_calls` (then it must answer with what it has);
 2. its answer is read with the output convention (or `parser.py`): **recommend**, **no**, or **couldn't read**;
-3. the job becomes **recommended** if any filter that judged it recommends it or its answer couldn't be read (high recall — you see it), **un_recommended** if all said no. A failed run (API error) leaves the job undecided and is retried on the next `filter run`. Jobs you decided on (`applied` / `not_applied`) are never changed.
+3. the job becomes **recommended** if any filter that judged it recommends it or its answer couldn't be read (high recall — you see it), **un_recommended** if all said no. A failed run (API error) leaves the job undecided and is retried on the next `filter run`. Jobs you decided on (`want_to_apply` / `applied` / `not_applied`) are never changed.
 
 Every answer is stored with the trace (each lookup), tokens, tool calls and cost. A filter's later edit (new version) doesn't re-judge anything unless you pass `--rescore`.
 
@@ -487,7 +557,7 @@ Every answer is stored with the trace (each lookup), tokens, tool calls and cost
 | `--max-cost USD` | stop starting new runs once this much was spent (runs already going finish). With the `api` runner it needs prices for the filters' models in `AUTO_APP_SELECT__PRICES`; with `claude-cli` it uses Claude Code's reported cost |
 | `--parallel N` | agent runs at once (default `AUTO_APP_SELECT__PARALLEL`, 3) |
 | `--dry-run` | list what would be judged; run nothing |
-| `--stream` | watch each agent work live: a header per job, its text as it's written, each lookup (`→ WebSearch: …`) and its result (`✓ …`), then the verdict line. Runs go one job at a time (so the output stays readable) |
+| `--stream` | watch each agent work live: a header per job (`── [3/30] #28 title · filter`), its text as it's written, each lookup (`→ WebSearch: …`) and its result (`✓ …`), then the verdict line. Runs go one job at a time (so the output stays readable) |
 | `--dir PATH` | another filters folder |
 
 **Who runs the agent** (`AUTO_APP_SELECT__RUNNER` in `.env`, default `auto`):
@@ -505,7 +575,9 @@ uv run auto-app filter run -f ml-engineer --rescore      # after editing that fi
 uv run auto-app filter run --job 28                      # just job 28 (again, if already judged)
 uv run auto-app filter run --job 28 --stream             # … and watch the agent work
 ```
-Output: one line per judgment (`#28 ml-engineer recommend — reason`), then totals: recommend / no / couldn't read / errors, how many jobs are now recommended or un_recommended, tokens and cost.
+Output:
+- **Progress while it runs.** First, what will run (`judging 30 runs on 30 jobs, 3 at a time`). Then one line per finished judgment, numbered: `[ 7/30] #28 ml-engineer recommend — reason`. In a terminal, a **live bar** stays at the bottom: done / total, cost so far, elapsed and estimated time left, and which jobs are running now with how long each has taken (`running #28(41s) #31(12s)`). With `--stream`, or when the output is piped or logged, there's no bar; the `[n/N]` lines remain, and `--stream` puts them in each job's header too.
+- **At the end:** how long it took, then totals — recommend / no / couldn't read / errors, how many jobs are now recommended or un_recommended, tokens and cost — and the command to review them (`job browse --state recommended`).
 
 #### `filter why JOB_ID`
 Why a job was or wasn't recommended: for each filter that judged it — its version (current, out of date, or filter removed), model, verdict and reason, how the answer was read (and why not, if it couldn't be), tokens / tool calls / cost, every lookup it made (`web_search`, `web_fetch`, `read_file` with their inputs), and the full answer. `--trace` adds every model turn and tool result.
@@ -596,7 +668,8 @@ Everything lives in `data/` in the project directory (git-ignored):
 
 ```
 data/auto_app.db                      the database: postings (raw, parsed, normalized), jobs and their state,
-                                      archived job records, batches, search runs, sightings, source health, aliases
+                                      archived job records, Step 2 judgments, your review decisions and feedback,
+                                      batches, search runs, sightings, source health, aliases
 data/logs/<batch_id>.log              run logs (scheduled runs: data/logs/scheduled.log)
 data/screenshots/<source>/<id>.png    only with --screenshots / probe
 data/failures/<batch_id>/<source>/    screenshots + HTML when a site blocks or shows a login wall / CAPTCHA
@@ -628,4 +701,4 @@ Plugins are checked when loaded (unique name, a `company` and valid `board` for 
 uv run pytest
 ```
 
-Browser collection runs end to end against a local fake job site (`tests/fakesite/`); platform plugins and parsers against saved real responses and pages (`tests/fixtures/`, personal data removed); company collection over a fake HTTP transport; collection, parse and normalize run against both the database and the file store. No test touches the network.
+Browser collection runs end to end against a local fake job site (`tests/fakesite/`); platform plugins and parsers against saved real responses and pages (`tests/fixtures/`, personal data removed); company collection over a fake HTTP transport; collection, parse and normalize run against both the database and the file store; Step 2 agents against a fake model; `job browse` through Textual's test driver. No test touches the network.

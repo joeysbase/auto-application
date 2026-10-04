@@ -223,9 +223,22 @@ reviews = Table(  # your decisions in review = training labels (S3)
     "reviews", metadata,
     Column("review_id", Integer, primary_key=True, autoincrement=True),
     Column("job_id", Integer),  # no FK: labels outlive the job (TTL)
-    Column("decision", String, nullable=False),  # applied | not_applied
+    Column("decision", String, nullable=False),  # want_to_apply | not_applied (review), applied (Step 3)
     Column("reason", Text),
     Column("filters", JSON),  # the filters that judged it, with their verdicts
+    Column("job_text", Text),  # title + company + description, kept for training
+    Column("created_at", Ts, nullable=False),
+)
+
+feedback = Table(  # your rating of one filter's verdict on one job = a label for that filter's preference model
+    "feedback", metadata,
+    Column("job_id", Integer, primary_key=True),  # no FK: labels outlive the job (TTL)
+    Column("filter", String, primary_key=True),
+    Column("filter_version", String),  # the version whose verdict you rated
+    Column("verdict", Boolean),  # what the filter said: recommend (True) / no (False) / couldn't read (NULL)
+    Column("correct", Boolean, nullable=False),  # you: the verdict was right / wrong
+    Column("origin", String, nullable=False, default="explicit"),  # explicit (g/b) | implied (by your decision)
+    Column("reason", Text),
     Column("job_text", Text),  # title + company + description, kept for training
     Column("created_at", Ts, nullable=False),
 )

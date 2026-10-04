@@ -9,6 +9,12 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-04 | `filter run` progress: `[n/N]` per judgment; live bar (done, cost, time left, running jobs) in a terminal | 2 | ✅ done | [2026-10-04-filter-run-progress](2026-10-04-filter-run-progress.md) |
+| 2026-10-04 | `filter review` merged into `job browse` (`--state recommended`, new `-f`); one app, one key set | 2 | ✅ done | [2026-10-04-merge-review-into-browse](2026-10-04-merge-review-into-browse.md) |
+| 2026-10-04 | Full-screen apps follow the system's light / dark mode (`AUTO_APP_UI__THEME=auto`, live), or a fixed theme | 2 | ✅ done | [2026-10-04-ui-theme](2026-10-04-ui-theme.md) |
+| 2026-10-04 | `job browse`: the job pool in a full-screen app (tabs per state, `job show` details, `m` set state, source / company narrowing, archived read-only) | 1–2 | ✅ done | [2026-10-04-job-browse](2026-10-04-job-browse.md) |
+| 2026-10-04 | Step 2 S3: review app (`filter review`, Textual; since merged into `job browse`) — decisions (`want_to_apply` / `not_applied`), per-filter feedback, undo; `want_to_apply` never expires | 2 | ✅ done | [2026-10-04-s3-review-app](2026-10-04-s3-review-app.md) |
+| 2026-10-04 | Design: review app (Textual) with per-filter feedback; `want_to_apply` queue for Step 3 (no expiry; user-configurable handling) | 2–3 | 📐 designed | [2026-10-04-review-design](2026-10-04-review-design.md) |
 | 2026-10-04 | `filter run --stream` (live text + lookups, one job at a time); CLI runner reads Claude Code's event stream, so `filter why` shows its lookups | 2 | ✅ done (verified live) | [2026-10-04-filter-run-stream](2026-10-04-filter-run-stream.md) |
 | 2026-10-03 | Commands grouped: `auto-app source · collect · process · job · filter · data <command>` (+ `run`, `schedule`); old names removed | 1–2 | ✅ done | [2026-10-03-command-groups](2026-10-03-command-groups.md) |
 | 2026-10-03 | Step 2: DeepSeek runner — `deepseek-…` models with `DEEPSEEK_API_KEY` (our web_fetch; no web_search) | 2 | ✅ done (offline-tested) | [2026-10-03-deepseek-runner](2026-10-03-deepseek-runner.md) |
@@ -49,7 +55,8 @@ One entry per feature or significant fix, newest first. Design lives in the step
 | Feature | Step | Design |
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
-| Step 2: first real `filter run`; S3 `filter review` (preference model later) | 2 | [step2](../step2-select.md) |
+| Preference model per filter, trained on review feedback | 2 | [step2 §7](../step2-select.md) |
+| Step 3: want-to-apply queue policy, then tailoring and submission | 3 | [step3 §0](../step3-apply.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).
 

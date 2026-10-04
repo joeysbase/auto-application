@@ -120,6 +120,23 @@ def apply_decisions(store, job_ids, filters: list[Filter], ttl) -> tuple[int, in
     return rec, unrec
 
 
+class Progress:
+    """What `run_select` reports while it runs; the CLI shows it (a live bar in a terminal, `[n/N]` lines otherwise).
+    start / done / finish are called on the main thread, began from the worker threads."""
+
+    def start(self, total: int, jobs: int, parallel: int) -> None:
+        pass
+
+    def began(self, job_id: int, flt: "Filter") -> None:
+        pass
+
+    def done(self, job_id: int, flt: "Filter", line: str, n: int, total: int, spent: float) -> None:
+        pass
+
+    def finish(self) -> None:
+        pass
+
+
 class StreamPrinter:
     """Formats live events for `filter run --stream`: the agent's text as it's written, lookups on their own lines."""
 
@@ -133,8 +150,9 @@ class StreamPrinter:
         self.write(text + "\n")
         self.at_line_start = True
 
-    def header(self, job_id: int, flt: Filter, title: str) -> None:
-        self._line(f"\n── #{job_id} {title[:70]} · {flt.name} ({flt.config.model})")
+    def header(self, job_id: int, flt: Filter, title: str, n: int | None = None, total: int | None = None) -> None:
+        count = f"[{n}/{total}] " if n and total else ""
+        self._line(f"\n── {count}#{job_id} {title[:70]} · {flt.name} ({flt.config.model})")
 
     def __call__(self, kind: str, data: dict) -> None:
         if kind == "text":
@@ -157,9 +175,12 @@ class StreamPrinter:
             self.at_line_start = True
 
 
-def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, progress=None, write=None) -> SelectReport:
+def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, progress: Progress | None = None,
+               write=None) -> SelectReport:
     """runner(filter, prompt[, on_event]) -> RunResult: `api_runner(client)`, the claude-cli or DeepSeek runner.
+    progress: told when the run starts, as each judgment starts and finishes, and at the end.
     With opts.stream, `write(text)` shows each run live (runs then go one at a time)."""
+    progress = progress or Progress()
     rep = SelectReport()
     pairs = plan(store, filters, opts)
     rep.planned = [(job_id, flt.name) for job_id, flt in pairs]
@@ -181,12 +202,18 @@ def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, p
     printer = StreamPrinter(write) if opts.stream and write else None
     titles = {j["job_id"]: j.get("title") or "" for j in store.jobs(archived=None)} if printer else {}
 
+    todo = [(job_id, flt, prompt) for job_id, flt, prompt in prompts if prompt]
+    total, started = len(todo), [0]
+
     def work(job_id: int, flt: Filter, prompt: str):
         with lock:
             if opts.max_cost is not None and spent[0] >= opts.max_cost:
                 return job_id, flt, None
+            started[0] += 1
+            n = started[0]
+        progress.began(job_id, flt)
         if printer:
-            printer.header(job_id, flt, titles.get(job_id, ""))
+            printer.header(job_id, flt, titles.get(job_id, ""), n, total)
             result = runner(flt, prompt, on_event=printer)
             printer.end()
         else:
@@ -198,43 +225,57 @@ def run_select(store, cfg, filters: list[Filter], runner, opts: SelectOptions, p
         return job_id, flt, (result, cost)
 
     touched = []
-    with ThreadPoolExecutor(max_workers=1 if printer else max(1, opts.parallel)) as pool:
-        futures = [pool.submit(work, job_id, flt, prompt) for job_id, flt, prompt in prompts if prompt]
-        for fut in as_completed(futures):
-            job_id, flt, done = fut.result()
-            if done is None:
-                rep.skipped_budget += 1
-                continue
-            result, cost = done
-            parsed = parse_answer(flt, result.answer)
-            store.save_judgment(job_id, flt, result, parsed, cost)  # written here, on one thread
-            touched.append(job_id)
-            rep.judged += 1
-            rep.input_tokens += result.input_tokens
-            rep.output_tokens += result.output_tokens
-            if cost is None:
-                rep.cost_unknown += 1
-            else:
-                rep.cost += cost
-            if result.status == "error":
-                rep.errors += 1
-                verdict = f"error: {result.error}"
-            elif not parsed.ok:
-                rep.unparsed += 1
-                verdict = f"couldn't read the answer ({parsed.error}) → shown in review"
-            elif parsed.output.recommend:
-                rep.recommend += 1
-                verdict = "recommend"
-            else:
-                rep.no += 1
-                verdict = "no"
-            line = (f"#{job_id:<5} {flt.name:<18} {verdict}"
-                    + (f" — {parsed.output.reason[:90]}" if parsed.ok and parsed.output.reason else ""))
-            rep.lines.append(line)
-            if progress:
-                progress(line)
+    workers = 1 if printer else max(1, opts.parallel)
+    progress.start(total, len({j for j, _, _ in todo}), workers)
+    finished = 0
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(work, job_id, flt, prompt) for job_id, flt, prompt in todo]
+            for fut in as_completed(futures):
+                finished += 1
+                job_id, flt, done = fut.result()
+                if done is None:
+                    rep.skipped_budget += 1
+                    progress.done(job_id, flt, f"#{job_id:<5} {flt.name:<18} skipped: --max-cost reached",
+                                  finished, total, spent[0])
+                    continue
+                _record(store, rep, touched, job_id, flt, done, finished, total, spent[0], progress)
+    finally:
+        progress.finish()
     rep.recommended_jobs, rep.un_recommended_jobs = apply_decisions(store, touched, filters, cfg.jobs.ttl_days)
     return rep
+
+
+def _record(store, rep: SelectReport, touched: list, job_id: int, flt: Filter, done, n: int, total: int,
+            spent: float, progress: Progress) -> None:
+    """Save one finished judgment and count it."""
+    result, cost = done
+    parsed = parse_answer(flt, result.answer)
+    store.save_judgment(job_id, flt, result, parsed, cost)  # written here, on one thread
+    touched.append(job_id)
+    rep.judged += 1
+    rep.input_tokens += result.input_tokens
+    rep.output_tokens += result.output_tokens
+    if cost is None:
+        rep.cost_unknown += 1
+    else:
+        rep.cost += cost
+    if result.status == "error":
+        rep.errors += 1
+        verdict = f"error: {result.error}"
+    elif not parsed.ok:
+        rep.unparsed += 1
+        verdict = f"couldn't read the answer ({parsed.error}) → recommended, shown in job browse"
+    elif parsed.output.recommend:
+        rep.recommend += 1
+        verdict = "recommend"
+    else:
+        rep.no += 1
+        verdict = "no"
+    line = (f"#{job_id:<5} {flt.name:<18} {verdict}"
+            + (f" — {parsed.output.reason[:90]}" if parsed.ok and parsed.output.reason else ""))
+    rep.lines.append(line)
+    progress.done(job_id, flt, line, n, total, spent)
 
 
 def reparse(store, cfg, filters: list[Filter], dry_run: bool = False) -> list[str]:

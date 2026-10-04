@@ -549,7 +549,7 @@ posting_raw (posting_id PK FK, fetched_at, capture JSON, card JSON, page_text, d
 
 jobs          (job_id PK, primary_posting_id FK, company_norm, title_norm, canonical_url, first/last_seen_at,
                step2 (NULL | recommended | un_recommended), step2_at,               -- C11: replaces `status`
-               decision (NULL | applied | not_applied), decided_at,
+               decision (NULL | want_to_apply | applied | not_applied), decided_at,   -- want_to_apply: Step 2 review
                expires_at,                       -- last_seen_at + the TTL of the job's state
                archived_at, archive JSON,        -- C11: compact record once archived (§9.2)
                archive_description BLOB(zstd),   -- applied jobs only
@@ -590,9 +590,10 @@ AUTO_APP_JOBS__TTL_DAYS__RECOMMENDED=30       # undecided, applied or not applie
 |---|---|
 | not evaluated, un_recommended | **deleted**: the job, its `job_keys`, `job_locations`, and **every linked posting** (incl. Level 1b duplicates) with its raw data and screenshot — in one transaction |
 | recommended (undecided, applied, not applied) | **archived** (9.2) |
+| want to apply (queued for Step 3) | **never expires while queued**; follows the recommended TTL once applied or withdrawn |
 
 - `expires_at` (= `last_seen_at` + the state's TTL) is kept on every active job; `auto-app job list` shows "in N d" (`due` = the next purge acts on it) and flags recommended-undecided jobs (`!`) 3 days before they're archived.
-- Until Steps 2–3 exist, `auto-app job mark JOB… --as STATE` sets the state by hand (`applied` / `not_applied` also mark the job recommended).
+- `auto-app job mark JOB… --as STATE` (or `m` in `auto-app job browse`) sets the state by hand; a decision (`want_to_apply` / `applied` / `not_applied`) keeps Step 2's verdict, or marks the job recommended if it has none.
 - `dedup` only refreshes `last_seen_at` / `expires_at`; deleting and archiving happen in `purge`, and `purge --dry-run` lists the jobs it would delete or archive.
 - Caveat: "not seen" isn't always "closed". Company sources with `posted_within_days: all` re-list every open job each run; LinkedIn searches only show recent postings and stop early, so a still-open LinkedIn job can stop being seen and expire.
 
@@ -646,7 +647,8 @@ auto-app run [-s SOURCE]… [--job-sites|--companies] [--no-collect] [--purge] [
 auto-app schedule install --at HH:MM… [--headless] [--dry-run] | show | remove   # macOS launchd: `run --scheduled --purge`
 auto-app job list [-s SOURCE] [-c TEXT] [--state S] [--archived] [--limit N]    # jobs, newest first
 auto-app job show <JOB_ID> [--description]                   # one job in detail; -d: its full description
-auto-app job mark <JOB_ID>... --as recommended|un_recommended|applied|not_applied|not_evaluated
+auto-app job browse [-s SOURCE] [-c TEXT] [--state TAB]      # full-screen app: every job by state, details, set states
+auto-app job mark <JOB_ID>... --as recommended|un_recommended|want_to_apply|applied|not_applied|not_evaluated
 auto-app data inspect [SOURCE [JOB_ID]]                       # saved postings
 auto-app data export <source> <job_id> [--to DIR]             # one posting from the database as files
 auto-app data import [--from DIR]                             # load a file store (data/raw/) into the database

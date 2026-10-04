@@ -62,7 +62,7 @@ def _cut(text: str | None, width: int) -> str:
 
 
 STATE_LABEL = {"not_evaluated": "not evaluated", "un_recommended": "un-recommended", "recommended": "recommended",
-               "applied": "applied", "not_applied": "not applied", "archived": "archived"}
+               "want_to_apply": "want to apply", "applied": "applied", "not_applied": "not applied", "archived": "archived"}
 WARN_DAYS = 3  # recommended, undecided jobs this close to being archived are flagged
 
 
@@ -80,6 +80,8 @@ def expiry(j: dict, now: datetime | None = None) -> str:
     """"in 12d" / "today" / "due" (the next purge removes or archives it); archived jobs: the archive date."""
     if j.get("archived_at"):
         return _date(j["archived_at"])
+    if j.get("state") == "want_to_apply":
+        return "queued"  # never expires while waiting for Step 3
     left = _days_left(j, now)
     if left is None:
         return "—"
@@ -153,6 +155,8 @@ def _state_line(j: dict) -> str:
 def _expires_line(j: dict) -> str:
     if j.get("archived_at"):
         return f"archived {_date(j['archived_at'], long=True)} (kept as a record; excluded from dedup)"
+    if j["state"] == "want_to_apply":
+        return "never, while queued for Step 3 (want to apply)"
     if not j.get("expires_at"):
         return "—"
     what = "archived" if j["state"] in ("recommended", "applied", "not_applied") else "deleted"

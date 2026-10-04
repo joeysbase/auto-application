@@ -5,7 +5,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
 | Step | Doc | Question it answers | Status |
 |---|---|---|---|
 | 1 | [step1-collect.md](step1-collect.md) | *What jobs are out there?* Collect postings from job sites and company career sites, store them, and turn them into one clean, deduplicated list of jobs | Raw collection working for LinkedIn; plugins, parse, DB, dedup designed |
-| 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | S1 implemented (filters); S2–S3 designed |
+| 2 | [step2-select.md](step2-select.md) | *Which of them should I apply to?* Your filters (a command + settings, one folder each): an agent runs the command on each job (and may look things up), OR-ed with each filter's preference model; you decide | S1–S3 implemented (filters, agent judgment, review in `job browse`); preference model open |
 | 3 | [step3-apply.md](step3-apply.md) | *How do I apply?* Tailor the CV per job and submit, with a human approving | Designed |
 
 Implementation progress, one entry per feature: [updates/](updates/README.md).
@@ -36,27 +36,30 @@ Implementation progress, one entry per feature: [updates/](updates/README.md).
 
 ## 3. Job state
 
-Every collected job is in the **pool**. Step 2 evaluates pool jobs and **recommends** a subset — your list; you decide on each recommended job. A job's state is two fields:
+Every collected job is in the **pool**. Step 2 evaluates pool jobs and **recommends** a subset — your list; you decide on each recommended job in review. A job's state is two fields:
 
 | # | State | `step2` | `decision` | Set by |
 |---|---|---|---|---|
 | 1 | not evaluated | — | — | Step 1 (dedup) |
 | 2 | **un_recommended** — evaluated, left out (reason kept) | `un_recommended` | — | Step 2 |
-| 3 | **recommended, undecided** (un_applied) | `recommended` | — | Step 2 |
-| 4 | recommended, **applied** | `recommended` | `applied` | Step 3 (on submission) |
-| 5 | recommended, **not applied** | `recommended` | `not_applied` | you |
+| 3 | **recommended, undecided** | `recommended` | — | Step 2 |
+| 4 | **want to apply** — queued for Step 3 | `recommended` | `want_to_apply` | you, in review |
+| 5 | recommended, **applied** | `recommended` | `applied` | Step 3 (on submission) |
+| 6 | recommended, **not applied** | `recommended` | `not_applied` | you, in review (or withdrawing from the queue) |
 
 ```
-pool ──(step 2)──► un_recommended
-  │
-  └──(step 2)──► recommended ──(you: apply → step 3 submits)──► applied
-                     │
-                     └──(you: no)──► not_applied
+pool ──(step 2)──► un_recommended ──(you, in review: "should have been recommended")──┐
+  │                                                                                   ▼
+  └──(step 2)──► recommended ──(you: apply)──► want_to_apply ──(step 3 applies)──► applied
+                     │                               │
+                     └──(you: no)──► not_applied ◄───┘ (you withdraw)
 ```
 
-Step 3's progress between "I'll apply" and "submitted" (tailoring, review, submission attempts) lives on its application record, not on the job.
+- **Review** (`auto-app job browse`, [step2 §8](step2-select.md#8-review)) records your decision — `want_to_apply` or `not_applied` — and, separately, per-filter feedback on whether each verdict was right (the preference models' labels).
+- **`want_to_apply` is a queue.** Step 3 picks queued jobs up, applies, and sets `applied`. *How* the queue is worked is your choice — one at a time, one every N minutes, at most N a day, in an order you pick ([step3 §1](step3-apply.md)).
+- Step 3's progress on one application (tailoring, your approval, submission attempts) lives on its application record, not on the job.
 
-Implemented in C11 (Step 1): the two fields, the TTL and archiving below. Until Steps 2–3 set them, `auto-app job mark JOB… --as recommended | un_recommended | applied | not_applied | not_evaluated` does it by hand.
+Implemented in C11 (Step 1): the two fields, the TTL and archiving below; `want_to_apply` and review in Step 2 S3. `auto-app job mark JOB… --as recommended | un_recommended | want_to_apply | applied | not_applied | not_evaluated` sets them by hand (until Step 3 exists, also `applied`).
 
 **Job TTL** (global, `AUTO_APP_JOBS__TTL_DAYS__*` in `.env`; clock = time since any of the job's postings was last seen; details in [step1 §9](step1-collect.md#9-retention-ttl)):
 
@@ -65,6 +68,7 @@ Implemented in C11 (Step 1): the two fields, the TTL and archiving below. Until 
 | not evaluated | 14 days | **deleted** with every linked posting |
 | un_recommended | 7 days | **deleted** with every linked posting |
 | recommended (undecided, applied, not applied) | 30 days | **archived**: kept as a compact record, excluded from dedup |
+| **want to apply** | **none** — never expires while queued | stays until Step 3 applies (→ applied) or you withdraw it (→ not applied); Step 3 tells you if its posting has gone |
 
 Archived jobs keep the summary, Step 2 result, your decision, posting identity, matching keys and — for applied jobs — the description; a new posting that looks like an archived applied / declined job becomes a new job **with a warning** ("looks like job #12, which you applied to on …").
 
@@ -99,8 +103,8 @@ auto-application/
 │   ├── core/                        # config, models, db, logging, notify — no site knowledge
 │   ├── sources/                     # plugin interface + built-in plugins (linkedin, handshake, jobright)
 │   ├── collect/                     # step 1a: collection engine
-│   ├── process/                     # step 1b: parse, normalize, dedup, purge
-│   ├── select/                      # step 2: filters (command, settings, parser), job details; next: agent judgment, review
+│   ├── process/                     # step 1b: parse, normalize, dedup, purge; `job browse` (the full-screen app)
+│   ├── select/                      # step 2: filters, job details, agent runners, judgment, review answers
 │   └── apply/                       # step 3: tailor, verify, render, review, submitters
 ├── tests/                           # mirrors src/; fakesite/, fixtures/<source>/
 ├── docs/                            # these design docs

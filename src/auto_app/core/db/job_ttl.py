@@ -72,6 +72,8 @@ def apply_job_ttl(store, ttl: JobTTL, *, now: datetime | None = None, dry_run: b
             .where(j.c.archived_at.is_(None))
         ).all()
         for job_id, step2, decision, last, title, company in rows:
+            if decision == "want_to_apply":
+                continue  # queued for Step 3: never expires while waiting (docs/README.md §3)
             seen = latest.get(job_id) or last
             if seen is None:
                 continue

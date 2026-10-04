@@ -175,8 +175,66 @@ def test_stream_shows_each_run_live_one_at_a_time(env):
     rep = run_select(db, CFG, [flt], api_runner(client), SelectOptions(stream=True, parallel=3), write=out.append)
     shown = "".join(out)
     assert rep.judged == 3 and client.streamed == 3
-    assert shown.count("── #") == 3 and "· ml (claude-sonnet-5)" in shown
+    assert shown.count("── [") == 3 and "── [3/3] #" in shown and "· ml (claude-sonnet-5)" in shown
     assert "strong ML fit" in shown and "analyst role" in shown  # the agents' text, live
     # one at a time: each header is followed by that job's own text before the next header
-    blocks = shown.split("── #")[1:]
+    blocks = shown.split("── [")[1:]
+    assert len(blocks) == 3
     assert all(("ML Engineer" in b) == ("strong ML fit" in b) for b in blocks)
+
+
+def test_progress_is_reported_per_run_with_counts_and_cost(env):
+    import io
+
+    from rich.console import Console
+
+    from auto_app.select.engine import Progress
+    from auto_app.select.progress_view import LineProgress, LiveProgress, make_progress
+
+    db, folder, jobs = env
+    events = []
+
+    class Sink(Progress):
+        def start(self, total, jobs, parallel):
+            events.append(("start", total, jobs, parallel))
+
+        def began(self, job_id, flt):
+            events.append(("began", job_id))
+
+        def done(self, job_id, flt, line, n, total, spent):
+            events.append(("done", n, total, line.split()[0], spent))
+
+        def finish(self):
+            events.append(("finish",))
+
+    run_select(db, CFG, [load_filter(folder / "ml")], api_runner(FakeClient(by_title)), SelectOptions(parallel=2),
+               progress=Sink())
+    assert events[0] == ("start", 3, 3, 2) and events[-1] == ("finish",)
+    done = [e for e in events if e[0] == "done"]
+    assert [e[1] for e in done] == [1, 2, 3] and all(e[2] == 3 for e in done)
+    assert sorted(e[3] for e in done) == sorted(f"#{j}" for j in jobs.values())
+    assert done[-1][4] == pytest.approx(3 * (100 * 3 + 20 * 15) / 1e6)  # cost so far
+    assert len([e for e in events if e[0] == "began"]) == 3
+
+    out = []
+    lp = LineProgress(out.append)
+    lp.start(12, 10, 3)
+    lp.done(1, None, "#1     ml   recommend", 2, 12, 0.5)
+    lp.finish()
+    assert out[0] == "judging 12 runs on 10 jobs, 3 at a time" and out[1] == "[ 2/12] #1     ml   recommend"
+    assert out[2].startswith("took ")
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, width=150)
+    assert isinstance(make_progress(False, print, console), LiveProgress)
+    assert isinstance(make_progress(True, print, console), LineProgress)  # --stream: no bar
+    assert isinstance(make_progress(False, print, Console(file=io.StringIO())), LineProgress)  # not a terminal
+    live = LiveProgress(console)
+    flt = load_filter(folder / "ml")
+    live.start(2, 2, 2)
+    live.began(5, flt)
+    assert "running #5" in live._running_text()
+    live.done(5, flt, "#5     ml   no — [not] markup", 1, 2, 0.01)
+    live.finish()
+    text = buf.getvalue()
+    assert "[1/2] #5" in text and "[not] markup" in text and "took " in text

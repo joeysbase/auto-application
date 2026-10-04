@@ -208,6 +208,15 @@ class JobsConfig(BaseModel):
     ttl_days: JobTTL = JobTTL()
 
 
+class UiConfig(BaseModel):
+    """The full-screen app (`job browse`)."""
+
+    model_config = ConfigDict(extra="forbid")
+    theme: str = "auto"  # auto = follow the system's light / dark mode (live); or any Textual theme name
+    light_theme: str = "textual-light"  # what `auto` uses in light mode
+    dark_theme: str = "textual-dark"  # … and in dark mode
+
+
 class AppConfig(BaseModel):
     defaults: Defaults = Defaults()
     sources: dict[str, SourceConfig] = Field(default_factory=dict)  # plugin name → its searches and limits
@@ -217,6 +226,7 @@ class AppConfig(BaseModel):
     retention: RetentionConfig = RetentionConfig()
     jobs: JobsConfig = JobsConfig()
     select: SelectConfig = SelectConfig()
+    ui: UiConfig = UiConfig()
     # Also write every posting/batch as files under data/raw/ (a browsable debug copy of the database).
     debug_files: bool = False
     # Old `companies:` entries (platform, board) — only to tell you which plugin file to create.
@@ -298,7 +308,7 @@ def _migrate(data: dict) -> dict:
 
 # ---- global settings: .env / environment (docs: README "Configuration") ----------------------------
 
-GLOBAL_FIELDS = ("run_window", "min_hours_between_runs", "retry", "retention", "jobs", "select", "debug_files")
+GLOBAL_FIELDS = ("run_window", "min_hours_between_runs", "retry", "retention", "jobs", "select", "ui", "debug_files")
 ENV_PREFIX = "AUTO_APP_"
 
 
@@ -313,6 +323,7 @@ class GlobalSettings(BaseSettings):
     retention: RetentionConfig | None = None
     jobs: JobsConfig | None = None
     select: SelectConfig | None = None
+    ui: UiConfig | None = None
     debug_files: bool | None = None
 
 

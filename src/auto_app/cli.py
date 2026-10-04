@@ -417,7 +417,7 @@ def dedup(
         typer.echo(f"jobs now: {len(store.jobs())} · list them with `auto-app job list`")
 
 
-STATES = ("not_evaluated", "un_recommended", "recommended", "applied", "not_applied")
+STATES = ("not_evaluated", "un_recommended", "recommended", "want_to_apply", "applied", "not_applied")
 
 
 def _jobs(
@@ -425,7 +425,7 @@ def _jobs(
     source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only jobs found on this source (repeatable)")] = None,
     company: Annotated[Optional[str], typer.Option("--company", "-c", help="Only jobs whose company contains this text")] = None,
     state: Annotated[Optional[str], typer.Option(
-        help="Only jobs in this state: not_evaluated | un_recommended | recommended (undecided) | applied | not_applied")] = None,
+        help="Only jobs in this state: not_evaluated | un_recommended | recommended (undecided) | want_to_apply | applied | not_applied")] = None,
     archived: Annotated[bool, typer.Option("--archived", help="List archived job records instead of active jobs")] = False,
     limit: Annotated[Optional[int], typer.Option(help="Show at most N jobs (newest first)")] = None,
     out: OutOpt = None,
@@ -467,10 +467,56 @@ def _jobs(
     typer.echo(format_job_list(rows))
 
 
+def _check_themes(cfg: AppConfig) -> None:
+    from textual.theme import BUILTIN_THEMES
+
+    from auto_app.process.job_browser import check_themes
+
+    bad = check_themes(cfg.ui)
+    if bad:
+        typer.echo(f"unknown theme {', '.join(bad)} in AUTO_APP_UI__… — use auto or one of: "
+                   f"{', '.join(sorted(BUILTIN_THEMES))}", err=True)
+        raise typer.Exit(2)
+
+
+@job_app.command("browse")
+def job_browse(
+    source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only jobs found on this source (repeatable; `s` in the app)")] = None,
+    company: Annotated[Optional[str], typer.Option("--company", "-c", help="Only jobs whose company contains this text (`c` in the app)")] = None,
+    state: Annotated[Optional[str], typer.Option(
+        help="Open on this tab: all | not_evaluated | recommended | un_recommended | want_to_apply | applied | not_applied | archived")] = None,
+    filter_: Annotated[Optional[list[str]], typer.Option("--filter", "-f", help="Only jobs these filters judged, and only their verdicts (repeatable)")] = None,
+    directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """Browse and review jobs in a full-screen app: tabs per state, details, filter verdicts; decide, rate, set states."""
+    from auto_app.process.job_browser import TABS, JobBrowser, run_browser
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+
+    if state and state not in TABS:
+        raise typer.BadParameter(f"expected one of {', '.join(TABS)}", param_hint="--state")
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`job browse`")
+    _check_themes(cfg)
+    fs = load_filters(directory or FILTERS_DIR)  # for "older version" marks; judgments show even if a filter is gone
+    known = {r["filter"] for r in store.judgment_rows()}
+    unknown = [n for n in filter_ or [] if n not in known and n not in fs.filters]
+    if unknown:
+        typer.echo(f"no filter named {unknown} has judged any job (filters: {', '.join(sorted(known)) or 'none'})", err=True)
+        raise typer.Exit(2)
+    if not sys.stdout.isatty():
+        typer.echo("`job browse` is a full-screen app — run it in a terminal (or use `job list`)", err=True)
+        raise typer.Exit(2)
+    run_browser(JobBrowser(store, list(fs.filters.values()), ttl=cfg.jobs.ttl_days, sources=source, company=company,
+                           only_filters=filter_), start=state or "all", ui=cfg.ui)
+
+
 @job_app.command("mark")
 def mark(
     job_ids: Annotated[list[int], typer.Argument(help="Job number(s)", metavar="JOB_ID...")],
-    to: Annotated[str, typer.Option("--as", help="recommended | un_recommended | applied | not_applied | not_evaluated")],
+    to: Annotated[str, typer.Option("--as", help="recommended | un_recommended | want_to_apply | applied | not_applied | not_evaluated")],
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
@@ -480,23 +526,12 @@ def mark(
     _require_db(store, "`mark`")
     if to not in STATES:
         raise typer.BadParameter(f"expected one of {', '.join(STATES)}", param_hint="--as")
-    step2, decision = {
-        "not_evaluated": (None, None),
-        "un_recommended": ("un_recommended", None),
-        "recommended": ("recommended", None),
-        "applied": ("recommended", "applied"),  # you only decide on recommended jobs
-        "not_applied": ("recommended", "not_applied"),
-    }[to]
     for job_id in job_ids:
-        j = store.job(job_id)
-        if not j:
-            typer.echo(f"no job #{job_id}", err=True)
+        try:
+            store.mark_job(job_id, to)
+        except ValueError as e:
+            typer.echo(str(e), err=True)
             raise typer.Exit(1)
-        if j.get("archived_at"):
-            typer.echo(f"job #{job_id} is archived (a record); its state can't change", err=True)
-            raise typer.Exit(1)
-        keep_step2 = to in ("applied", "not_applied") and j.get("step2") == "recommended"
-        store.set_job_state(job_id, step2=... if keep_step2 else step2, decision=decision)
     store.refresh_job_dates(cfg.jobs.ttl_days)
     for job_id in job_ids:
         j = store.job(job_id)
@@ -704,7 +739,10 @@ def _select(
         def runner(flt, prompt, **kw):
             return (deepseek_runner if is_deepseek(flt.config.model) else claude_runner)(flt, prompt, **kw)
 
-    rep = run_select(store, cfg, chosen, runner, opts, progress=typer.echo,
+    from auto_app.select.progress_view import make_progress
+
+    progress = None if dry_run else make_progress(stream, typer.echo)
+    rep = run_select(store, cfg, chosen, runner, opts, progress=progress,
                      write=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
     jobs = len({j for j, _ in rep.planned})
     if not rep.planned:
@@ -727,7 +765,7 @@ def _select(
                + (f"; {rep.skipped_budget} not run (--max-cost reached)" if rep.skipped_budget else ""))
     typer.echo(f"jobs now: {rep.recommended_jobs} recommended, {rep.un_recommended_jobs} un_recommended "
                f"(of those judged this run) · tokens {rep.input_tokens:,} in / {rep.output_tokens:,} out · cost {cost}")
-    typer.echo("details of one job: auto-app filter why <#> · recommended jobs: auto-app job list --state recommended")
+    typer.echo("review them: auto-app job browse --state recommended · details of one job: auto-app filter why <#>")
 
 
 @filter_app.command("why")
@@ -1071,7 +1109,7 @@ def job_list(
     source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only jobs found on this source (repeatable)")] = None,
     company: Annotated[Optional[str], typer.Option("--company", "-c", help="Only jobs whose company contains this text")] = None,
     state: Annotated[Optional[str], typer.Option(
-        help="Only jobs in this state: not_evaluated | un_recommended | recommended (undecided) | applied | not_applied")] = None,
+        help="Only jobs in this state: not_evaluated | un_recommended | recommended (undecided) | want_to_apply | applied | not_applied")] = None,
     archived: Annotated[bool, typer.Option("--archived", help="List archived job records instead of active jobs")] = False,
     limit: Annotated[Optional[int], typer.Option(help="Show at most N jobs (newest first)")] = None,
     out: OutOpt = None,
@@ -1171,7 +1209,7 @@ _ORDER = {
     source_app: ["list", "show", "add", "login", "health", "plan"],
     collect_app: ["run", "probe", "stats"],
     process_app: ["parse", "normalize", "dedup"],
-    job_app: ["list", "show", "mark"],
+    job_app: ["list", "show", "browse", "mark"],
     filter_app: ["list", "show", "run", "why", "reparse"],
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],

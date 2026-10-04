@@ -1,14 +1,33 @@
 # Step 3 — Apply
 
-**Goal:** for each recommended job **you chose to apply to** (Step 2 review), produce a CV tailored to its description — without inventing anything — and submit the application, with you approving before anything is sent.
+**Goal:** work through the jobs **you chose to apply to** — the `want_to_apply` queue filled by Step 2's review — producing a CV tailored to each description, without inventing anything, and submitting the application; then mark the job `applied`. How the queue is worked through is **yours to configure** (§0).
 
 ```
-you: "apply" ─► tailor CV (+ cover letter) ─► verify (no fabrication) ─► render PDF ─► review queue (you)
-                                                                                         │ approve
-                                                           applied ◄─ submit (fill form, you confirm)
+want_to_apply queue ─► (your queue policy picks the next job) ─► tailor CV (+ cover letter) ─► verify (no fabrication)
+                                                                                                    │
+      applied ◄── submit (fill form, you confirm) ◄── approve ◄── render PDF / review (you) ◄────────┘
 ```
 
-Status: 📐 designed. Depends on Step 2.
+Status: 📐 designed (how applications are tailored and submitted is still open; the queue and its configurable handling below are fixed). Depends on Step 2's review (`want_to_apply`).
+
+---
+
+## 0. The want-to-apply queue
+
+- **Input:** jobs with `decision = want_to_apply`, set by you in Step 2's review (`auto-app job browse`) or by `auto-app job mark --as want_to_apply`. Queued jobs don't expire (overview §3).
+- **Output:** each job ends as `applied` (Step 3 submitted it, or you applied by hand and said so) or `not_applied` (you withdrew it, or its posting is gone and you dropped it).
+- **How the queue is worked is your choice — a queue policy**, not something fixed in the app. Examples of what it should cover:
+
+| You may want … | e.g. |
+|---|---|
+| one at a time, each with your approval | the default |
+| a pace | one application every 5 minutes; at most 10 a day; only between 9:00 and 18:00 |
+| an order | newest posting first; by filter; by the order you queued them |
+| batching | tailor 10 CVs now, review them together, submit later |
+| per-platform handling | Greenhouse / Lever / Ashby automated; Workday and everything else by hand (`apply manual`) |
+
+  The exact form (a settings block, or a policy file per user like Step 2's filters) is decided with the rest of Step 3; the requirement is that these choices are configurable without code changes.
+- Before working on a job, Step 3 checks its posting is still open; if it's gone, it tells you instead of applying.
 
 ---
 
@@ -107,7 +126,7 @@ links: { github: …, linkedin: …, portfolio: … }
 
 ## 5. Review queue
 
-`auto-app apply review` — for each tailored application: job summary, CV diff and PDF, cover letter, every form answer (source: bank / drafted / missing), verification results, Step 1 warnings. Actions: **approve**, **edit** (opens the file; re-verified on save), **drop** (the job's `decision` becomes `not_applied`). Progress is the application's status (`tailored → approved`); the job stays recommended-undecided until submission.
+`auto-app apply review` — for each tailored application: job summary, CV diff and PDF, cover letter, every form answer (source: bank / drafted / missing), verification results, Step 1 warnings. Actions: **approve**, **edit** (opens the file; re-verified on save), **drop** (the job's `decision` becomes `not_applied`). Progress is the application's status (`tailored → approved`); the job stays `want_to_apply` until submission.
 
 ---
 
@@ -136,13 +155,14 @@ applications (application_id PK, job_id FK, platform, apply_url, status,  -- tai
               model, prompt_version, created_at, approved_at, submitted_at,
               confirmation_path, error)
 ```
-On submission (`submitted`, or `mark-applied`) the job's `decision` becomes `applied` with `decided_at`; a dropped application sets `not_applied`. The job then follows the recommended TTL (archived after 30 days unseen, kept as a record with its description — [overview §3](README.md#3-job-state)). Submitters refuse jobs that are archived or already `applied`.
+On submission (`submitted`, or `mark-applied`) the job's `decision` changes from `want_to_apply` to `applied`, with `decided_at`; a dropped application sets `not_applied`. From then on the job follows the recommended TTL (archived after 30 days unseen, kept as a record with its description — [overview §3](README.md#3-job-state)); while it was queued it never expired. Submitters only take `want_to_apply` jobs and refuse ones that are archived or already `applied`.
 
 ---
 
 ## 8. CLI
 
 ```
+auto-app apply queue                             # the want_to_apply queue, in your policy's order
 auto-app apply tailor [--job ID | --limit N]
 auto-app apply review
 auto-app apply submit [--job ID] [--platform P]  # fills forms, waits for your final click

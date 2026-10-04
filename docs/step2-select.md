@@ -15,7 +15,7 @@ jobs ─────┴─► agent runs the command on the job ─► answer �
                                                                      your decisions train each filter's preference model
 ```
 
-Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 📐 designed. Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
+Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`); S2 ✅ (agent runner, parsing, `select`, `why`, `--reparse`); S3 ✅ (review in `auto-app job browse`: decisions, per-filter feedback, `want_to_apply` queue). Design simplified 2026-10-01/02; replaces the earlier hard-filter + scorer design. Focus: the agent part; the preference model's design is open. Depends on Step 1 (parsed jobs with descriptions; job state from C11).
 
 ---
 
@@ -26,7 +26,7 @@ Status: S1 ✅ (filters: loading, validation, versions, job details, `filters`);
 3. **The app doesn't define how to judge.** No built-in scores, thresholds or deal-breaker rules. It only needs to know, from each answer, **recommend or not** and **why** — read through our output convention, or your own parser.
 4. **Two judges per filter, OR-ed:** the agent running the command, and the filter's own **preference model**, trained on your decisions. The agent never sees the preference model's output.
 5. **High recall.** Step 2 should rarely drop a job you might want: every job you review becomes a training label, and each preference model needs many and varied ones — rejects included. When unsure, recommend; when an answer can't be read, show it to you.
-6. **You decide.** Step 2 only sets `step2` (`recommended` / `un_recommended`); `decision` is yours.
+6. **You decide.** Step 2 only sets `step2` (`recommended` / `un_recommended`); `decision` is yours — set in review (§8): `want_to_apply` (queued for Step 3) or `not_applied`.
 7. **An agent, so a command can use information beyond the posting** (§6) — bounded by read-only tools, a per-job budget, and no access to LinkedIn.
 
 ---
@@ -219,22 +219,47 @@ To cut cost later, a filter could run a cheap first pass (a single call, no tool
 ## 7. Preference model — one per filter (design open)
 
 Fixed so far:
-- **One per filter**, learning that filter's taste. Its labels are **your** decisions on jobs that filter judged (a job judged by two filters gives a label to both) — never the agent's output.
+- **One per filter**, learning that filter's taste — different filters stand for different preferences of the same user, so each needs its own model.
+- **Its labels are your per-filter feedback in review** (§8): for each job the filter judged, whether its verdict was right — a good or bad recommendation, or rightly or wrongly left out. Never the agent's output. Your apply / not-apply decision is stored too, as a weaker, per-job signal (you may skip a good job for other reasons).
 - Tied to the filter's **name**, not its version, so it keeps learning across command edits.
 - It judges jobs independently of the agent; its yes/no is OR-ed with the agent's (§5).
 - Its trained state lives in `data/` (with the rest of the app's data), not in the filter folder.
-- Your review decisions are stored from the start (§8), so it will have data when it's built.
+- Feedback is stored from the start (§8–9), so it will have data when it's built. Review shows un-recommended jobs too, so labels aren't only about jobs that were already recommended.
 
-Open: its inputs, model type, when it's trusted enough to recommend, and how it avoids learning only from jobs that were already recommended.
+Open: its inputs, model type, and when it's trusted enough to recommend.
 
 ---
 
 ## 8. Review
 
-`auto-app filter review` walks through **recommended, undecided** jobs:
+You review in **`auto-app job browse`**, a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below (`job browse --state recommended` opens on the first). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
 
-- shows: title, company, locations, the filter(s) that recommended it and their reasons, warnings, expires in N days, link;
-- you answer **apply** (→ Step 3 creates an application; `decision` becomes `applied` on submission) or **no** (`decision = not_applied`), optionally with a short reason — kept as training labels for the filters that judged the job, and for improving commands.
+```
+┌ Recommended (23) · Un-recommended (41) · Want to apply (3) ─┬ #28 Research Scientist, AI Accelerator … ───────────────┐
+│ ▸ #28 NVIDIA      Research Scientist, AI Accel…   14d       │ NVIDIA · Austin, TX; Santa Clara, CA · posted 2026-02-05 │
+│   #24 ByteDance   Visual Generation & Multimod…   13d  👍   │ expires in 14 days · found on nvidia, linkedin           │
+│   #22 ByteDance   Research Scientist Graduate…    13d       │                                                          │
+│ ★ #17 RemoteHunter Data Scientist, Payments       13d  👍   │ [1] ml-engineer   recommend · 👍                         │
+│ ✗ #15 Amazon      Applied Scientist, Worldwide…   12d  👎   │     strong ML systems fit; sponsors H-1B                 │
+│   …                                                         │     looked up: WebSearch "NVIDIA H-1B sponsorship"       │
+│                                                             │ [2] research      no · (not rated)                       │
+│                                                             │     PhD-only research role                               │
+│                                                             │ Description ─────────────────────────────────────────    │
+│                                                             │ NVIDIA Research is searching for a world-class …         │
+├─────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┤
+│ ↑↓ jobs  tab tab  ←→/1–9 filter  g right  b wrong  a want to apply  n not apply  m state  u undo  o link  / search  q quit │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Review tabs** (`tab` / `shift+tab`; among All, Not evaluated, Applied, Not applied, Archived): **Recommended** — undecided recommended jobs, the ones to decide on (default); **Un-recommended** — jobs every filter turned down, to catch wrong rejections; **Want to apply** — your queue, to review or withdraw. Each list is newest first, searchable (`/`), with marks for what you've answered: ★ want to apply, ✗ not applied, 👍 / 👎 your feedback. A job you answer stays in the list you answered it in (with its mark) until you leave the app, so you can change your mind; `-f NAME` limits the app to jobs those filters judged, and to their verdicts.
+
+**Detail pane** (the selected job; scrolls): what `job show` prints — company, locations, dates, expiry, postings, matching keys, Step 1 warnings ("looks like job #12, which you applied to"), **every filter that judged it** — its verdict, reason, what it looked up, and your feedback so far — then the full description. `o` opens the apply link in your browser.
+
+**Two separate answers**, both optional, saved the moment you press a key:
+1. **Your decision, per job:** `a` → **want to apply** (queued for Step 3), `n` → **not applied**. Available in every list — choosing `a` on an un-recommended job also tells its filters they were wrong to leave it out unless you've rated them otherwise. `u` undoes the last answer.
+2. **Feedback, per filter:** pick a filter (`←` `→` or its number; with one filter, no picking needed) and press `g` (its verdict was **right**) or `b` (**wrong**). On a filter that recommended: good / bad recommendation. On one that said no: rightly / wrongly left out. Each rating is a label for **that filter's** preference model only (§7). A short reason can be added (`r`) to either answer.
+
+Nothing is submitted anywhere: `want_to_apply` only queues the job; Step 3 applies.
 
 Also: `auto-app filter why <job>` (each filter's version, the agent's full answer, the parsed output, and the trace with every page it looked at).
 
@@ -248,10 +273,13 @@ judgments       (job_id FK, filter, filter_version, model, answer TEXT,         
                  recommend BOOLEAN, reason TEXT, parser TEXT, parse_error TEXT,       -- parsed output; NULL = couldn't read
                  trace BLOB(zstd), tokens, tool_calls, cost_usd, status, created_at, parsed_at,
                  PRIMARY KEY (job_id, filter_version))
-reviews         (job_id FK, decision, reason, filters JSON, job_text TEXT, created_at)  -- your decisions = labels
+reviews         (review_id PK, job_id, decision, reason, job_text TEXT, created_at)  -- your decisions (per job)
+feedback        (job_id, filter, filter_version, verdict BOOLEAN,                    -- the filter's verdict you rated …
+                 correct BOOLEAN, reason TEXT, job_text TEXT, created_at,           -- … right / wrong = a label
+                 PRIMARY KEY (job_id, filter))                                       -- latest rating per job and filter
 -- later: preference model state per filter (data/), its scores per job
 ```
-Step 2 sets `jobs.step2` / `step2_at`; review sets `jobs.decision` / `decided_at` (Step 3 sets `applied` on submission). Archived jobs (C11) keep their Step 2 verdict in the archive record; `reviews` rows (with the job's title and description text) are kept after the job is archived or deleted, so labels outlive the TTL.
+Review sets `jobs.decision` / `decided_at` (`want_to_apply` or `not_applied`; Step 3 sets `applied` on submission). `reviews` and `feedback` rows carry the job's text (title, company, description) and have no foreign key to `jobs`, so labels outlive the TTL. Archived jobs (C11) keep their Step 2 verdict in the archive record.
 
 ---
 
@@ -261,11 +289,12 @@ Step 2 sets `jobs.step2` / `step2_at`; review sets `jobs.decision` / `decided_at
 auto-app filter list [--dir PATH]                                 # your filters: version, model, tools, problems (S1 ✅)
 auto-app filter show <NAME> [--job N] [--dir PATH]                # one filter; --job: exactly what the agent gets (S1 ✅)
 auto-app filter run [-f NAME]… [-j JOB]… [--stream] [--limit N] [--rescore] [--max-cost USD] [--parallel N] [--dry-run]   # judge jobs (S2 ✅)
+                                                                  #   progress: [n/N] per judgment; live bar (done, cost, time left, running jobs) in a terminal
 auto-app filter why <JOB_ID> [--trace]                            # each filter's answer, lookups, cost, version (S2 ✅)
 auto-app filter reparse [-f NAME]… [--dry-run]                    # re-read stored answers with the current parsers (S2 ✅)
-auto-app filter review [-f NAME]                                  # decide on recommended jobs (S3, planned)
+auto-app job browse [--state TAB] [-f NAME]… [-s SOURCE]… [-c TEXT]   # review (and browse): decide, rate each filter's verdict (S3 ✅)
 ```
-Until review exists, `auto-app job mark` (C11) sets states by hand.
+`auto-app job mark` (C11) still sets any state by hand, `want_to_apply` included.
 
 ---
 
@@ -275,8 +304,8 @@ Until review exists, `auto-app job mark` (C11) sets states by hand.
 |---|---|
 | S1 | Filters: folder loader + validation (`command.md`, `filter.yaml`, optional `parser.py`, other files), versions, job-details builder (labelled lines, boilerplate stripped, length cap), `$ARGUMENTS` substitution; `filters` command (list, check, `--job` preview); `filters.example/` committed — ✅ `src/auto_app/select/` |
 | S2 ✅ | Agent judgment: agent runners — our loop on the Claude API, headless Claude Code with your login (`runner: auto`), and DeepSeek for `deepseek-…` models (server-side web search / fetch with LinkedIn blocked, `read_file` limited to the filter's folder, per-job budget), raw answers + traces + cost in `judgments`; built-in convention parser and `parser.py`, `--reparse`; several filters (any recommends); `select` (parallel, `--max-cost`), `why` — first tried on ~30 saved jobs |
-| S3 | `review` → `reviews` (labels per filter) |
-| — | Preference model per filter: design open (§7) |
+| S3 ✅ | Review app (Textual; merged into `job browse`): Recommended / Un-recommended / Want to apply lists, detail pane, decisions (`want_to_apply` / `not_applied`), per-filter feedback (`feedback` table), undo, open link; `want_to_apply` state + no-expiry rule; data layer tested without the UI, the app with Textual's test driver — `src/auto_app/select/review.py`, `process/job_browser.py` |
+| — | Preference model per filter, trained on its feedback: design open (§7) |
 
 ## 12. Risks
 

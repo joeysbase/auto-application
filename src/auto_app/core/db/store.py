@@ -56,7 +56,7 @@ def job_state(row) -> str:
         return "archived"
     step2, decision = row.get("step2"), row.get("decision")
     if decision:
-        return decision  # applied | not_applied
+        return decision  # want_to_apply | applied | not_applied
     return {"recommended": "recommended", "un_recommended": "un_recommended"}.get(step2 or "", "not_evaluated")
 
 
@@ -490,6 +490,53 @@ class DbStore:
                 r["trace"] = unzjson(r["trace"], [])
         return rows
 
+    # ---- review (Step 2 S3) -------------------------------------------------------------------
+
+    def add_review(self, job_id: int, decision: str, reason: str | None, filters: list | None, job_text: str) -> int:
+        with self.engine.begin() as conn:
+            return conn.execute(insert(T.reviews).values(
+                job_id=job_id, decision=decision, reason=reason, filters=filters, job_text=job_text,
+                created_at=utcnow())).inserted_primary_key[0]
+
+    def delete_review(self, review_id: int) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(T.reviews.delete().where(T.reviews.c.review_id == review_id))
+
+    def set_review_reason(self, review_id: int, reason: str | None) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(update(T.reviews).where(T.reviews.c.review_id == review_id).values(reason=reason))
+
+    def reviews(self, job_id: int | None = None) -> list[dict]:
+        q = select(T.reviews).order_by(T.reviews.c.review_id)
+        if job_id is not None:
+            q = q.where(T.reviews.c.job_id == job_id)
+        with self.engine.connect() as conn:
+            return [dict(r) for r in conn.execute(q).mappings()]
+
+    def feedback_marks(self) -> dict[int, dict[str, bool]]:
+        """job_id → {filter: correct} for every rating."""
+        out: dict[int, dict[str, bool]] = {}
+        with self.engine.connect() as conn:
+            for job_id, name, correct in conn.execute(select(T.feedback.c.job_id, T.feedback.c.filter, T.feedback.c.correct)):
+                out.setdefault(job_id, {})[name] = correct
+        return out
+
+    def feedback_of(self, job_id: int) -> dict[str, dict]:
+        with self.engine.connect() as conn:
+            return {r["filter"]: dict(r) for r in conn.execute(
+                select(T.feedback).where(T.feedback.c.job_id == job_id)).mappings()}
+
+    def set_feedback(self, row: dict) -> None:
+        fb = T.feedback
+        with self.engine.begin() as conn:
+            conn.execute(fb.delete().where(fb.c.job_id == row["job_id"], fb.c.filter == row["filter"]))
+            conn.execute(insert(fb).values(**{**row, "created_at": row.get("created_at") or utcnow()}))
+
+    def delete_feedback(self, job_id: int, filter: str) -> None:
+        fb = T.feedback
+        with self.engine.begin() as conn:
+            conn.execute(fb.delete().where(fb.c.job_id == job_id, fb.c.filter == filter))
+
     def job_scopes(self) -> dict[int, set[str]]:
         """For every active job: the sources and `source/search` names its postings were found by
         (what a filter's `applies_to` matches)."""
@@ -522,6 +569,26 @@ class DbStore:
         with self._conn() as conn:
             conn.execute(update(T.jobs).where(T.jobs.c.job_id == job_id).values(**values))
 
+    def mark_job(self, job_id: int, to: str) -> tuple[str | None, str | None]:
+        """Set a job's state by hand (`job mark`, `job browse`). Returns its previous (step2, decision).
+        A decision keeps Step 2's verdict (or marks the job recommended if it has none)."""
+        step2, decision = {
+            "not_evaluated": (None, None),
+            "un_recommended": ("un_recommended", None),
+            "recommended": ("recommended", None),
+            "want_to_apply": ("recommended", "want_to_apply"),  # queued for Step 3
+            "applied": ("recommended", "applied"),
+            "not_applied": ("recommended", "not_applied"),
+        }[to]
+        j = self.job(job_id)
+        if not j:
+            raise ValueError(f"no job #{job_id}")
+        if j.get("archived_at"):
+            raise ValueError(f"job #{job_id} is archived (a record); its state can't change")
+        keep_step2 = decision and j.get("step2") in ("recommended", "un_recommended")
+        self.set_job_state(job_id, step2=... if keep_step2 else step2, decision=decision)
+        return j.get("step2"), j.get("decision")
+
     def refresh_job_dates(self, ttl, now: datetime | None = None) -> int:
         """Active jobs: last_seen_at = the latest last-seen of any of their postings; expires_at = that + the
         TTL of their state. Returns how many jobs changed."""
@@ -530,10 +597,13 @@ class DbStore:
         with self._conn() as conn:
             latest = dict(conn.execute(select(p.c.job_id, func.max(p.c.last_seen_at))
                                        .where(p.c.job_id.is_not(None)).group_by(p.c.job_id)).all())
-            for job_id, step2, last, exp in conn.execute(select(j.c.job_id, j.c.step2, j.c.last_seen_at, j.c.expires_at)
-                                                         .where(j.c.archived_at.is_(None))).all():
+            for job_id, step2, decision, last, exp in conn.execute(
+                    select(j.c.job_id, j.c.step2, j.c.decision, j.c.last_seen_at, j.c.expires_at)
+                    .where(j.c.archived_at.is_(None))).all():
                 seen = latest.get(job_id) or last
                 expires = seen + timedelta(days=ttl.for_state(step2)) if seen else None
+                if decision == "want_to_apply":
+                    expires = None  # queued for Step 3: never expires while waiting
                 if (seen, expires) != (last, exp):
                     conn.execute(update(j).where(j.c.job_id == job_id).values(last_seen_at=seen, expires_at=expires))
                     changed += 1
@@ -556,7 +626,8 @@ class DbStore:
                 w = found.setdefault(old, {"kind": "repost", "job_id": old, "decision": decision, "keys": []})
                 w["keys"].append(key_type)
                 when = f" on {iso(decided)[:10]}" if decided else ""
-                what = {"applied": f"which you applied to{when}", "not_applied": f"which you declined{when}"}.get(
+                what = {"applied": f"which you applied to{when}", "not_applied": f"which you declined{when}",
+                        "want_to_apply": f"which you queued to apply to{when}"}.get(
                     decision, "which Step 2 recommended" if step2 == "recommended" else "archived")
                 w["text"] = f"looks like job #{old} ({(arch or {}).get('title', '')}), {what}"
             if not found:
