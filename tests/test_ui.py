@@ -98,3 +98,27 @@ async def test_click_a_section_or_a_tab_and_brackets_cycle(env):  # noqa: F811
         await pilot.press("f1", "slash", "[", "x", "enter")  # in a search box, [ is typed, not a switch
         assert app.section == "jobs" and app.screen.search == "[x"
         await pilot.press("q")
+
+
+async def test_question_mark_lists_the_sections_keys(env):  # noqa: F811
+    from auto_app.ui import HelpScreen
+
+    db, jobs, apps, app = make(env)
+    async with app.run_test(size=(200, 50)) as pilot:
+        assert app.screen.query_one("Footer").compact
+        await pilot.press("question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        rows = dict(app.screen.rows)
+        assert "add a short reason" in rows["r"] and "want to apply" in rows["a"] and rows["/"].startswith("search")
+        assert "1–9" in rows and "switch section" in " ".join(rows.values())  # keys kept off the footer are listed
+        await pilot.press("f2")  # switching is ignored while help is open
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape", "f2", "question_mark")
+        rows = dict(app.screen.rows)
+        assert "d" in rows and "a" not in rows and "m" not in rows  # audit: only audit keys
+        await pilot.press("escape", "f3", "question_mark")
+        rows = dict(app.screen.rows)
+        assert "next applier" in rows["c"] and "r" not in rows  # inbox, Hand-offs tab: its keys only
+        await pilot.press("escape", "f1", "slash", "question_mark", "enter")  # ? is typed in a search box
+        assert app.screen.search == "?"
+        await pilot.press("q")

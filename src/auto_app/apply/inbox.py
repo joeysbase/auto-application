@@ -37,8 +37,8 @@ class InboxScreen(Screen):
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
-        Binding("tab", "switch(1)", "tab", priority=True),
-        Binding("shift+tab", "switch(-1)", "tab", show=False, priority=True),
+        Binding("tab", "switch(1)", "next tab", show=False, priority=True),
+        Binding("shift+tab", "switch(-1)", "previous tab", show=False, priority=True),
         Binding("o", "open", "open"),
         Binding("a", "applied", "applied"),
         Binding("c", "couldnt", "couldn't → next applier"),
@@ -48,6 +48,19 @@ class InboxScreen(Screen):
         Binding("d", "drop", "drop (not applied)"),
         Binding("q", "app.quit", "quit"),
     ]
+
+    KEY_HELP = {  # the help panel (?)
+        "switch(1)": "next tab (Hand-offs, Failed, Done)",
+        "switch(-1)": "previous tab",
+        "open": "hand-offs: open it (Simplify: in your Chrome, to autofill; manual: the link and your CV) · done: the link",
+        "applied": "you applied: the job becomes applied",
+        "couldnt": "it didn't work this way: hand it to the next applier in the chain",
+        "later": "move it to the back of the list",
+        "retry": "start the applier chain over",
+        "manual": "apply by hand (the manual applier)",
+        "drop": "drop it: the job becomes not applied",
+        "app.quit": "quit",
+    }
 
     def __init__(self, apps: Applications, cv=None, open_url=webbrowser.open):
         super().__init__()
@@ -65,7 +78,7 @@ class InboxScreen(Screen):
             with VerticalScroll(id="detail-box"):
                 yield Static(id="detail")
         yield Static(id="status")
-        yield Footer()
+        yield Footer(compact=True)
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)

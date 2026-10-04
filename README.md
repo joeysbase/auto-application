@@ -394,6 +394,7 @@ One full-screen app (in your terminal) with a section for each interactive part 
 - The **bar at the top** shows the sections and what's waiting in each — `Audit (8 left)`, `Inbox (2 waiting, 1 failed)` — with the current one highlighted.
 - Each section **keeps its state** (tab, cursor, search, narrowing) while you're in another, and **reloads when you come back** — a job you queued in Jobs shows up in Inbox once `apply run` started it.
 - **The mouse works:** click a section in the top bar, a tab in a section's tab bar, or a row in the list to select it.
+- **`?` lists every key** of the current section (in its current tab), with what each does — including the ones kept off the compact footer (`tab`, `←` `→` / `1`–`9` pick a filter, `r` reason, `o` open link, `s` / `c` narrow). `Esc` closes it. (If the footer still doesn't fit your window, scroll it with the mouse wheel over it.)
 - The **footer** lists only the current section's keys; `ctrl+p` (the command palette) also has "Go to Jobs / Audit / Inbox". Switching is ignored while a pop-up (e.g. the state menu) is open; in a search or reason box, `[` and `]` are typed as usual.
 - Audit stays isolated: only the randomly drawn jobs and audit keys (Jobs' narrowing doesn't affect it).
 - If a section can't open (e.g. `config/apply.yaml` doesn't load), it says why instead.

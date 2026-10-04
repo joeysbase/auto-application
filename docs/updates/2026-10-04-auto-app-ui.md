@@ -37,3 +37,8 @@
 - **`[` / `]`** go to the previous / next section, for terminals where F-keys are taken (F3 = find next in VS Code's terminal; media keys on a Mac). They aren't priority keys, so in a search or reason box they're typed as usual.
 - The bar's hint reads "click, F1 / F2 / F3, or [ ] to switch".
 - Test: `test_click_a_section_or_a_tab_and_brackets_cycle`. 264 tests pass.
+
+## Added the same day: a compact footer and `?` for every key
+- **Every section's footer is compact,** and the less-used keys are kept off it: `tab`, `←` `→` / `1`–`9`, `r` reason, `o` open link, `s` / `c` narrowing. Measured: Jobs ≈ 143 characters, Audit ≈ 115, Inbox ≈ 96, so one line in a normal-width terminal (otherwise the footer scrolls with the mouse wheel).
+- **`?`** opens a panel listing every key the current section offers in its current tab or mode, each with a one-line explanation (each screen's `KEY_HELP`). It closes with `Esc`. In a search box `?` is typed as usual, and switching sections is ignored while the panel is open.
+- Test: `test_question_mark_lists_the_sections_keys`. 265 tests pass.

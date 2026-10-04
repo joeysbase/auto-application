@@ -208,10 +208,11 @@ class JobsScreen(Screen):
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
-        Binding("tab", "next_list", "tab", priority=True),
-        Binding("shift+tab", "prev_list", "tab", show=False, priority=True),
-        Binding("left", "filter(-1)", "filter", priority=True),
-        Binding("right", "filter(1)", "filter", show=False, priority=True),
+        # show=False: in the help panel (?) only, to keep the footer to one line
+        Binding("tab", "next_list", "next tab", show=False, priority=True),
+        Binding("shift+tab", "prev_list", "previous tab", show=False, priority=True),
+        Binding("left", "filter(-1)", "previous filter", show=False, priority=True),
+        Binding("right", "filter(1)", "next filter", show=False, priority=True),
         *[Binding(str(i), f"pick({i})", show=False) for i in range(1, 10)],
         Binding("a", "decide('want_to_apply')", "want to apply"),
         Binding("n", "decide('not_applied')", "not apply"),
@@ -220,17 +221,38 @@ class JobsScreen(Screen):
         Binding("B", "label_all(False)", "no filter should"),
         Binding("m", "mark", "set state"),
         Binding("u", "undo", "undo"),
-        Binding("r", "reason", "reason"),
-        Binding("o", "open_link", "open link"),
+        Binding("r", "reason", "reason", show=False),
+        Binding("o", "open_link", "open link", show=False),
         Binding("slash", "search", "search"),
-        Binding("s", "narrow('source')", "source"),
-        Binding("c", "narrow('company')", "company"),
+        Binding("s", "narrow('source')", "source", show=False),
+        Binding("c", "narrow('company')", "company", show=False),
         Binding("d", "draw", "draw more"),
         Binding("e", "toggle_eval", "evaluation"),
         Binding("escape", "cancel", show=False),
         Binding("q", "app.quit", "quit"),
     ]
     COLUMNS = (" ", "#", "company", "title", "posted", "state", "expires", "")
+    KEY_HELP = {  # the help panel (?): one line per key
+        "next_list": "next tab (the lists: All, Not evaluated, Recommended, …)",
+        "prev_list": "previous tab",
+        "filter(-1)": "pick the previous filter on this job (marked ▸) — or press its number 1–9",
+        "filter(1)": "pick the next filter on this job",
+        "decide('want_to_apply')": "want to apply: queue the job for Step 3 (it never expires while queued)",
+        "decide('not_applied')": "not apply",
+        "label(True)": "the picked filter should recommend this job — your answer about the job, whatever it said",
+        "label(False)": "the picked filter shouldn't recommend this job",
+        "label_all(False)": "no filter should recommend it (one undo)",
+        "mark": "set any state from a menu (like `job mark`)",
+        "undo": "undo your last change (any job)",
+        "reason": "add a short reason to your last answer on this job",
+        "open_link": "open the job's link in your browser",
+        "search": "search title / company / source / job number (Esc clears)",
+        "narrow('source')": "show only jobs from these sources (comma-separated; empty = all)",
+        "narrow('company')": "show only jobs whose company contains this text",
+        "draw": "draw more random \"no\" jobs to audit",
+        "toggle_eval": "show / hide the evaluation panel",
+        "app.quit": "quit",
+    }
 
     def __init__(self, browser: JobBrowser, open_url=webbrowser.open, start: str = "recommended",
                  show_eval: bool = False, audit_mode: bool = False):
@@ -261,7 +283,7 @@ class JobsScreen(Screen):
                 yield Static(id="detail")
         yield Static(id="status")
         yield Input(id="prompt")
-        yield Footer()
+        yield Footer(compact=True)
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)

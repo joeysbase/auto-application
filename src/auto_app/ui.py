@@ -14,7 +14,7 @@ import webbrowser
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Static
 
 from auto_app.core.appearance import system_dark
@@ -39,7 +39,31 @@ class MessageScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static(id="sections")
         yield Static(escape(self.text), id="why")
-        yield Footer()
+        yield Footer(compact=True)
+
+
+class HelpScreen(ModalScreen):
+    """`?` — every key of the current section (in its current tab / mode), with what it does."""
+
+    DEFAULT_CSS = """
+    HelpScreen { align: center middle; }
+    HelpScreen > VerticalScroll { width: 96; max-height: 85%; border: round $primary; padding: 0 1; background: $surface; }
+    """
+    BINDINGS = [Binding("escape", "dismiss", "close"), Binding("question_mark", "dismiss", "close", show=False),
+                Binding("q", "dismiss", "close", show=False)]
+
+    def __init__(self, title: str, rows: list[tuple[str, str]]):
+        super().__init__()
+        self.title_text, self.rows = title, rows
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import VerticalScroll
+
+        width = max((len(k) for k, _ in self.rows), default=4) + 2
+        lines = [f"[b]{escape(self.title_text)}[/b] — keys (Esc closes)", ""]
+        lines += [f"[b]{escape(k):<{width}}[/b]{escape(text)}" for k, text in self.rows]
+        with VerticalScroll():
+            yield Static("\n".join(lines))
 
 
 class AutoApp(App):
@@ -53,6 +77,7 @@ class AutoApp(App):
         # so they still type into a search or reason box
         Binding("left_square_bracket", "cycle(-1)", "section", show=False),
         Binding("right_square_bracket", "cycle(1)", "section", show=False),
+        Binding("question_mark", "help", "keys"),  # not priority: typed as usual in a search box
     ]
 
     def __init__(self, jobs=None, audit=None, inbox=None, cv=None, start: str = "jobs", jobs_tab: str = "recommended",
@@ -139,6 +164,32 @@ class AutoApp(App):
         self.section = name
         self.switch_screen(name)
         self.refresh_sections()
+
+    def help_rows(self, screen) -> list[tuple[str, str]]:
+        """Every key the section offers right now (its footer, plus the keys kept off it), explained."""
+        rows, seen = [], set()
+        explain = getattr(screen, "KEY_HELP", {})
+        for b in list(getattr(screen, "BINDINGS", [])):
+            name = b.action.split("(")[0].removeprefix("screen.")
+            if b.action in seen or name in ("cancel",) or screen.check_action(name, ()) is False:
+                continue
+            seen.add(b.action)
+            text = explain.get(b.action) or explain.get(name) or b.description
+            if b.action.startswith("pick("):
+                if "pick" in seen:
+                    continue
+                seen.add("pick")
+                rows.append(("1–9", "pick that filter on this job"))
+                continue
+            rows.append((self.get_key_display(b), text))
+        rows += [("click · F1 F2 F3 · [ ]", "switch section: Jobs, Audit, Inbox"), ("?", "this help")]
+        return rows
+
+    def action_help(self) -> None:
+        if self.screen is not self.get_screen(self.section):
+            return  # a pop-up is open
+        title = SECTION_TITLES[self.section] + (f" · {self.screen.kind}" if hasattr(self.screen, "kind") else "")
+        self.push_screen(HelpScreen(title, self.help_rows(self.screen)))
 
     def action_cycle(self, step: int) -> None:
         self.action_section(SECTIONS[(SECTIONS.index(self.section) + step) % len(SECTIONS)])
