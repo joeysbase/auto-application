@@ -4,10 +4,10 @@
     prepare(app)     — read the form and answer what it can (automated appliers, A2+), or hand the job to you
     open(app)        — hand-off appliers: open the application for you
 
-A1 has the two hand-off appliers, which cover every platform: **simplify** (the apply link in your Chrome, where
-the Simplify extension autofills it — you submit) and **manual** (the apply link and your CV — you apply). The
-automated ones (greenhouse, lever, ashby, workday, generic) are *planned*: a chain naming them skips them
-("not built yet") and falls back to the next.
+Built: **greenhouse** (automated: questions from its API, the form filled in a browser — greenhouse.py), and the two
+hand-off appliers, which cover every platform: **simplify** (the apply link in your Chrome, where the Simplify
+extension autofills it — you submit) and **manual** (the apply link and your CV — you apply). The others (lever,
+ashby, workday, generic) are *planned*: a chain naming them skips them ("not built yet") and falls back to the next.
 """
 
 import subprocess
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-PLANNED = {"greenhouse": "A3", "lever": "A4", "ashby": "A4", "workday": "A6", "generic": "A7"}
+PLANNED = {"lever": "A4", "ashby": "A4", "workday": "A6", "generic": "A7"}
 
 
 def platform_of(url: str | None) -> str:
@@ -38,8 +38,10 @@ def platform_of(url: str | None) -> str:
 
 @dataclass
 class Outcome:
-    kind: str  # handoff | ready | needs_input | action_needed | unsupported | failed | submitted
+    kind: str  # handoff | ready | needs_input | action_needed | unsupported | failed | closed | filled | submitted
     reason: str = ""
+    questions: list | None = None  # prepare: every question, answered or not
+    apply_url: str | None = None  # prepare: the form's own link, when the applier knows a better one
 
 
 def open_in_chrome(url: str) -> None:
@@ -64,7 +66,7 @@ class Applier:
         """None = yes; otherwise why not (an `unsupported` outcome)."""
         return None if app.get("apply_url") else Outcome("unsupported", "no apply link")
 
-    def prepare(self, app: dict) -> Outcome:
+    def prepare(self, app: dict, ctx=None) -> Outcome:
         raise NotImplementedError
 
 
@@ -77,7 +79,7 @@ class SimplifyHandoff(Applier):
     def __init__(self, opener=open_in_chrome):
         self.opener = opener
 
-    def prepare(self, app: dict) -> Outcome:
+    def prepare(self, app: dict, ctx=None) -> Outcome:
         return Outcome("handoff", "open it in Chrome; Simplify autofills; you submit")
 
     def open(self, app: dict, cv: Path | None = None) -> str:
@@ -97,7 +99,7 @@ class ManualApplier(Applier):
     def can_apply(self, app: dict) -> Outcome | None:
         return None  # always: without a link you still apply your way, and say so
 
-    def prepare(self, app: dict) -> Outcome:
+    def prepare(self, app: dict, ctx=None) -> Outcome:
         return Outcome("handoff", "apply by hand")
 
     def open(self, app: dict, cv: Path | None = None) -> str:
@@ -108,7 +110,29 @@ class ManualApplier(Applier):
         return "opened the apply link" + (" and your CV" if cv else "") + " — apply, then press a"
 
 
-def registry(opener=None, manual_opener=None, revealer=None) -> dict[str, Applier]:
-    """The built appliers, by name (openers injectable for tests)."""
-    return {"simplify": SimplifyHandoff(**({"opener": opener} if opener else {})),
+@dataclass
+class ApplyContext:
+    """What the automated appliers need: your profile and answers, Claude (matcher), the threshold, the browser."""
+
+    me: object
+    matcher: object = None
+    threshold: float = 0.9
+    headless: bool = False
+    browser_profile: Path | None = None
+    answers_file: Path | None = None  # profile/answers.yaml, for "save" in the inbox
+    browser_profiles: Path | None = None  # browser-profiles/ (the Simplify browser's profile lives there)
+    simplify_consent: str = "essentials"  # Simplify's one-time consent notice: essentials | accept
+    dry_run: bool = True  # starting a job fills the real form headless and reads it back
+
+
+def registry(opener=None, manual_opener=None, revealer=None, http=None, filler=None, dry_runner=None,
+             simplify_context=None, simplify_route=None) -> dict[str, Applier]:
+    """The built appliers, by name (openers, the HTTP client, the form filler / dry run and the Simplify browser
+    injectable for tests)."""
+    from auto_app.apply.greenhouse import GreenhouseApplier
+    from auto_app.apply.simplify import SimplifyAutoApplier
+
+    return {"simplify_auto": SimplifyAutoApplier(open_context=simplify_context, route=simplify_route),
+            "greenhouse": GreenhouseApplier(http=http, filler=filler, dry_runner=dry_runner),
+            "simplify": SimplifyHandoff(**({"opener": opener} if opener else {})),
             "manual": ManualApplier(**{k: v for k, v in (("opener", manual_opener), ("revealer", revealer)) if v})}

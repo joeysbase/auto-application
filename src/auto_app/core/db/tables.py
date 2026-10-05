@@ -294,3 +294,20 @@ attempts = Table(  # every applier's try on an application, with its outcome (§
     Column("started_at", Ts, nullable=False),
     Column("ended_at", Ts),
 )
+
+questions = Table(  # Step 3: each application's questions, with what was filled in and why (§4, §8)
+    "questions", metadata,
+    Column("application_id", Integer, ForeignKey("applications.application_id"), primary_key=True),
+    Column("question_id", String, primary_key=True),  # the form's field name
+    Column("ord", Integer, nullable=False),  # the order on the form
+    Column("label", Text),
+    Column("type", String),  # text | textarea | file | select | multiselect
+    Column("kind", String),  # standard | known | sensitive | free_text
+    Column("required", Boolean),
+    Column("options", JSON),
+    Column("answer", JSON),
+    Column("source", String),  # profile | bank:<key> | claude | draft | you | skipped
+    Column("confidence", Float),
+    Column("seen", Boolean),  # drafts: shown to you in review?
+    Column("note", Text),
+)

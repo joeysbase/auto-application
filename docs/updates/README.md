@@ -9,6 +9,9 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-05 | `auto-app ui` layout: Jobs tabs All · Not evaluated · **New recommended** · **All recommended** · Un-recommended · Applied · Not applied (no Want to apply — it's Apply → Queued); a decision moves the job out at once; **Inbox renamed Apply** (F3); a short key bar (the tab's main keys, `?` for all) | 2–3 | ✅ done | [2026-10-05-ui-layout](2026-10-05-ui-layout.md) |
+| 2026-10-04 | Step 3: **starting a job is a dry run** — the form filled headless and read back (required + empty → Needs input, all filled → Ready to submit); **automated Simplify** (`simplify_auto`) built: Start Application, "Essentials only" consent, Autofill, gaps filled from profile / answers | 3 | ✅ done | [2026-10-04-step3-dry-run-simplify-auto](2026-10-04-step3-dry-run-simplify-auto.md) |
+| 2026-10-04 | Step 3 A2 + A3: questions answered from profile / answers.yaml / Claude CLI (sensitive only from answers.yaml), **Needs input** tab; **Greenhouse applier** (API questions, browser fill + submit, verified on a real form without submitting), Ready to submit, Action needed | 3 | ✅ done | [2026-10-04-step3-a2-a3](2026-10-04-step3-a2-a3.md) |
 | 2026-10-04 | `auto-app ui`: Jobs (F1), Audit (F2), Inbox (F3) in one app — section bar with what's waiting, state kept per section; `job browse` / `filter audit` / `apply inbox` open it on their section | 2–3 | ✅ done | [2026-10-04-auto-app-ui](2026-10-04-auto-app-ui.md) |
 | 2026-10-04 | Step 3 A1: profile / answers / apply policy, applier chains with fallback, **Simplify hand-off** + manual, `apply queue / run / inbox / list` | 3 | ✅ done | [2026-10-04-step3-a1](2026-10-04-step3-a1.md) |
 | 2026-10-04 | Design: Step 3 — parallel appliers with fallback chains (Simplify hand-off first), needs-input queue + `apply inbox`, YAML profile / answers up front, review or auto-submit; no LinkedIn Easy Apply automation; tailoring deferred | 3 | 📐 designed | [2026-10-04-step3-design](2026-10-04-step3-design.md) |
@@ -62,7 +65,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 |---|---|---|
 | Dedup calibration on overlapping LinkedIn + company data | 1 | [step1 §7.6](../step1-collect.md#76-rollout-and-calibration) |
 | Step 2 S5 (deferred — evaluation decides): preference model, fit only, dealbreaker veto | 2 | [step2 §7.5–7.6](../step2-select.md) |
-| Step 3 A2: questions — answer matching by meaning (Claude CLI), sensitive-only-from-bank, the Needs input tab | 3 | [step3 §4, §10](../step3-apply.md) |
+| Step 3 A4: Lever and Ashby appliers · A5: auto-submit with pace limits, notifications | 3 | [step3 §10](../step3-apply.md) |
 
 Further source plugins (e.g. Microsoft careers) are left to whoever needs them; the plugin interface is documented in [step1 §2.2](../step1-collect.md#22-plugin-interface).
 

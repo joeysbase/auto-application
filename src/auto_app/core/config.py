@@ -221,6 +221,17 @@ class UiConfig(BaseModel):
     dark_theme: str = "textual-dark"  # … and in dark mode
 
 
+class ApplyConfig(BaseModel):
+    """Step 3 (docs/step3-apply.md §4): how application questions are matched and drafted, and the browser."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str = "claude-sonnet-5"  # Claude, through the Claude Code CLI (your login), for matching and drafting
+    claude_cli: str = "claude"
+    match_threshold: Annotated[float, Field(gt=0, le=1)] = 0.9  # below this, a matched answer goes to you
+    headless: bool = False  # the submit browser: visible by default (CAPTCHAs, logins go to you)
+    simplify_consent: Literal["essentials", "accept"] = "essentials"  # Simplify's one-time "Before you autofill" notice
+
+
 class AppConfig(BaseModel):
     defaults: Defaults = Defaults()
     sources: dict[str, SourceConfig] = Field(default_factory=dict)  # plugin name → its searches and limits
@@ -231,6 +242,7 @@ class AppConfig(BaseModel):
     jobs: JobsConfig = JobsConfig()
     select: SelectConfig = SelectConfig()
     ui: UiConfig = UiConfig()
+    apply: ApplyConfig = ApplyConfig()
     # Also write every posting/batch as files under data/raw/ (a browsable debug copy of the database).
     debug_files: bool = False
     # Old `companies:` entries (platform, board) — only to tell you which plugin file to create.
@@ -312,7 +324,7 @@ def _migrate(data: dict) -> dict:
 
 # ---- global settings: .env / environment (docs: README "Configuration") ----------------------------
 
-GLOBAL_FIELDS = ("run_window", "min_hours_between_runs", "retry", "retention", "jobs", "select", "ui", "debug_files")
+GLOBAL_FIELDS = ("run_window", "min_hours_between_runs", "retry", "retention", "jobs", "select", "ui", "apply", "debug_files")
 ENV_PREFIX = "AUTO_APP_"
 
 
@@ -328,6 +340,7 @@ class GlobalSettings(BaseSettings):
     jobs: JobsConfig | None = None
     select: SelectConfig | None = None
     ui: UiConfig | None = None
+    apply: ApplyConfig | None = None
     debug_files: bool | None = None
 
 

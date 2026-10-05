@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Footer, Input, OptionList, Static
+from textual.widgets import DataTable, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from auto_app.core.config import UiConfig
@@ -27,10 +27,14 @@ from auto_app.select import audit
 from auto_app.select.evaluate import evaluate
 from auto_app.select.parse import verdict_text
 from auto_app.select.review import Review, Undo
+from auto_app.ui import KEY_BAR_CSS, key_bar
 
-TABS = ("all", "not_evaluated", "recommended", "un_recommended", "want_to_apply", "applied", "not_applied", "archived")
+# "recommended": new — recommended and not decided yet (a / n move it out); "all_recommended": every job a filter
+# recommended, whatever you decided. What you queued (want to apply) is in Apply (F3) → Queued
+TABS = ("all", "not_evaluated", "recommended", "all_recommended", "un_recommended", "applied", "not_applied")
 AUDIT_TABS = ("audit",)  # `filter audit`: only the randomly drawn jobs — the pool tabs would invite non-random labels
-TAB_TITLES = {"all": "All", "not_evaluated": "Not evaluated", "recommended": "Recommended",
+TAB_TITLES = {"all": "All", "not_evaluated": "Not evaluated", "recommended": "New recommended",
+              "all_recommended": "All recommended",
               "un_recommended": "Un-recommended", "want_to_apply": "Want to apply", "applied": "Applied",
               "not_applied": "Not applied", "archived": "Archived", "audit": "Audit"}
 AUDIT_MARK = {None: "?", True: "✗", False: "✓"}  # not labelled yet / good for some filter (a miss) / bad for all
@@ -74,7 +78,9 @@ class JobBrowser(Review):
             rows = self.store.jobs(archived=True)
         else:
             rows = self.store.jobs()
-            if kind != "all":
+            if kind == "all_recommended":
+                rows = [j for j in rows if j.get("step2") == "recommended" or j["job_id"] in keep]
+            elif kind != "all":
                 rows = [j for j in rows if j["state"] == kind or j["job_id"] in keep]
         rows = self._narrow(rows)
         if search:
@@ -87,7 +93,8 @@ class JobBrowser(Review):
 
     def counts(self) -> dict[str, int]:
         active = self._narrow(self.store.jobs())
-        out = {k: sum(1 for j in active if j["state"] == k) for k in TABS}
+        out = {k: sum(1 for j in active if j["state"] == k) for k in (*TABS, *MARKABLE)}  # every state, not only the tabs
+        out["all_recommended"] = sum(1 for j in active if j.get("step2") == "recommended")
         out["all"] = len(active)
         out["archived"] = len(self._narrow(self.store.jobs(archived=True)))
         status = audit.audit_status(self.store, self.only or None)
@@ -206,9 +213,16 @@ class JobsScreen(Screen):
     #prompt { dock: bottom; display: none; }
     #prompt.show { display: block; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
-    """
+    """ + KEY_BAR_CSS
+    # the key bar at the bottom: the main keys only (? lists every key)
+    BAR = [("a", "want to apply", "screen.decide('want_to_apply')"), ("n", "not apply", "screen.decide('not_applied')"),
+           ("g", "should recommend", "screen.label(True)"), ("b", "shouldn't", "screen.label(False)"),
+           ("/", "search", "screen.search")]
+    AUDIT_BAR = [("g", "should recommend", "screen.label(True)"), ("b", "shouldn't", "screen.label(False)"),
+                 ("B", "no filter should", "screen.label_all(False)"), ("d", "draw more", "screen.draw"),
+                 ("e", "evaluation", "screen.toggle_eval")]
     BINDINGS = [
-        # show=False: in the help panel (?) only, to keep the footer to one line
+        # all in the help panel (?); the key bar at the bottom shows the main ones
         Binding("tab", "next_list", "next tab", show=False, priority=True),
         Binding("shift+tab", "prev_list", "previous tab", show=False, priority=True),
         Binding("left", "filter(-1)", "previous filter", show=False, priority=True),
@@ -268,9 +282,10 @@ class JobsScreen(Screen):
         self.kind = start
         self.search = ""
         self.rows: list[dict] = []
-        self.answered = {k: set() for k in self.tabs}  # changed in this session, per tab: stay there with their mark
         self.filter_index = 0
         self.prompt_mode: str | None = None  # search | reason | source | company
+        self.just_decided: int | None = None  # the job a / n just moved out of the list (r: a reason for it)
+        self.just_decided_row = -1
         self.detail = None
 
     def compose(self) -> ComposeResult:
@@ -283,7 +298,7 @@ class JobsScreen(Screen):
                 yield Static(id="detail")
         yield Static(id="status")
         yield Input(id="prompt")
-        yield Footer(compact=True)
+        yield Static(key_bar(self.AUDIT_BAR if self.audit_mode else self.BAR), id="keys")
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
@@ -302,7 +317,7 @@ class JobsScreen(Screen):
         table = self.query_one(DataTable)
         if keep_job is None and self.rows and table.cursor_row < len(self.rows):
             keep_job = self.rows[table.cursor_row]["job_id"]
-        self.rows = self.browser.jobs(self.kind, self.search, keep=self.answered[self.kind])
+        self.rows = self.browser.jobs(self.kind, self.search)  # a decided job leaves its tab at once (u undoes)
         marks = self.browser.marks()
         table.clear()
         for j in self.rows:
@@ -349,7 +364,7 @@ class JobsScreen(Screen):
         notes = [f"source: {', '.join(b.sources)}" if b.sources else "", f"company: {b.company}" if b.company else "",
                  f"filter: {', '.join(sorted(b.only))}" if b.only else "", f"search: {self.search}" if self.search else ""]
         note = "   " + escape("  ".join(n for n in notes if n)) if any(notes) else ""
-        self.query_one("#tabs", Static).update(" · ".join(parts) + note)
+        self.query_one("#tabs", Static).update(" ".join(parts) + note)
 
     def current(self) -> dict | None:
         table = self.query_one(DataTable)
@@ -506,13 +521,16 @@ class JobsScreen(Screen):
         except ValueError as e:
             self.status(str(e))
             return
-        self.answered[self.kind].add(job["job_id"])
         self.status(f"#{job['job_id']}: {STATE_LABEL[decision]} — saved" +
-                    (" (queued for Step 3)" if decision == "want_to_apply" else ""))
+                    (" → Apply (F3) → Queued" if decision == "want_to_apply" else "") + " · r adds a reason · u undoes")
+        self.just_decided = job["job_id"]
         self.reload(job["job_id"])
         table = self.query_one(DataTable)
-        if table.cursor_row < len(self.rows) - 1:
-            table.move_cursor(row=table.cursor_row + 1)  # on to the next job
+        still = [j["job_id"] for j in self.rows].count(job["job_id"])
+        if still and table.cursor_row < len(self.rows) - 1:
+            table.move_cursor(row=table.cursor_row + 1)  # still listed here (All, All recommended): on to the next
+        # gone from this tab (New recommended): the cursor is already on the next job
+        self.just_decided, self.just_decided_row = job["job_id"], table.cursor_row
 
     def action_mark(self) -> None:
         job = self.current()
@@ -527,8 +545,7 @@ class JobsScreen(Screen):
             except ValueError as e:
                 self.status(str(e))
                 return
-            self.answered[self.kind].add(job["job_id"])
-            self.status(f"#{job['job_id']}: {STATE_LABEL[to]} — saved")
+            self.status(f"#{job['job_id']}: {STATE_LABEL[to]} — saved · u undoes")
             self.reload(job["job_id"])
 
         self.app.push_screen(StateMenu(job), done)
@@ -560,8 +577,16 @@ class JobsScreen(Screen):
         self._ask("search", "search title / company / source / #id — Enter to apply, Esc to clear", self.search)
 
     def action_reason(self) -> None:
-        if self.current():
-            self._ask("reason", "a reason for your last answer on this job — Enter to save, Esc to cancel")
+        job = self._reason_job()
+        if job:
+            self._ask("reason", f"a reason for your last answer on #{job} — Enter to save, Esc to cancel")
+
+    def _reason_job(self) -> int | None:
+        """r right after a / n: the job just decided (it has left the list); otherwise the job under the cursor."""
+        if self.just_decided is not None and self.query_one(DataTable).cursor_row == self.just_decided_row:
+            return self.just_decided  # still where the decision left the cursor
+        cur = self.current()
+        return cur["job_id"] if cur else None
 
     def action_narrow(self, what: str) -> None:
         current = ", ".join(self.browser.sources) if what == "source" else self.browser.company
@@ -584,8 +609,9 @@ class JobsScreen(Screen):
         mode, text = self.prompt_mode, event.value.strip()
         self._close_prompt()
         if mode == "reason":
-            job = self.current()
-            got = self.browser.add_reason(job["job_id"], text) if job else None
+            job = self._reason_job()
+            self.just_decided = None
+            got = self.browser.add_reason(job, text) if job else None
             self.status(f"reason saved on your {got}" if got else "answer this job first (a / n / g / b), then add a reason")
             return
         if mode == "search":

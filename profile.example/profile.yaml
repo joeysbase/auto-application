@@ -6,7 +6,13 @@ name:
   preferred: Alex
 email: alex@example.com
 phone: "+1 555 0100"
-location: { city: Boston, state: MA, country: United States }
+location:                        # address fields are asked by some forms (state: the full name, as dropdowns list it)
+  address1: 360 Huntington Ave
+  address2: ""
+  city: Boston
+  state: Massachusetts
+  postal_code: "02115"
+  country: United States
 links:
   linkedin: https://www.linkedin.com/in/alex-doe
   github: https://github.com/alexdoe

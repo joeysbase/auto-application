@@ -117,3 +117,26 @@ def format_me(me: Me) -> str:
     if not me.problems:
         out.append("ready to apply" + (" — consider adding the missing answers" if me.missing else ""))
     return "\n".join(out)
+
+
+def answer_key(label: str, existing) -> str:
+    """A key for a new answers.yaml entry, from the question: "Will you require sponsorship?" → will_you_require_sponsorship."""
+    import re
+
+    base = "_".join(re.findall(r"[a-z0-9]+", label.lower())[:6]) or "answer"
+    key, n = base, 2
+    while key in existing:
+        key, n = f"{base}_{n}", n + 1
+    return key
+
+
+def save_answer(path: Path, key: str | None, question: str, answer, kind: str = "fact") -> str:
+    """Add an entry to answers.yaml (appended as text, so your comments and order stay). Returns its key."""
+    current = (yaml.safe_load(path.read_text()) or {}) if path.is_file() else {}
+    key = key if key and key not in current else answer_key(question, current)
+    entry = {"question": question, "answer": answer} | ({"kind": "free_text"} if kind == "free_text" else {})
+    block = yaml.safe_dump({key: entry}, allow_unicode=True, sort_keys=False, width=120)
+    text = path.read_text() if path.is_file() else ""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + ("" if text.endswith("\n") or not text else "\n") + "# saved from apply inbox\n" + block)
+    return key

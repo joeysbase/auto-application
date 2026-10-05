@@ -154,7 +154,7 @@ async def test_app_keys(env):
         s.query_one("DataTable").move_cursor(row=[j["job_id"] for j in s.rows].index(jobs["ml"]))
         await pilot.press("a")
         assert db.job(jobs["ml"])["decision"] == "want_to_apply"
-        assert jobs["ml"] in [j["job_id"] for j in s.rows]  # stays listed with ★ this session
+        assert jobs["ml"] not in [j["job_id"] for j in s.rows]  # decided: out of New recommended (u brings it back)
         await pilot.press("u")
         assert db.job(jobs["ml"])["decision"] is None
         await pilot.press("slash", *"acme", "enter")
@@ -162,9 +162,11 @@ async def test_app_keys(env):
         await pilot.press("n", "r", *"no", "enter")
         assert db.job(jobs["analyst"])["decision"] == "not_applied" and db.reviews(jobs["analyst"])[0]["reason"] == "no"
         await pilot.press("escape", "tab")
-        assert s.kind == "un_recommended" and [j["job_id"] for j in s.rows] == [jobs["sales"]]
+        assert s.kind == "all_recommended" and jobs["ml"] in [j["job_id"] for j in s.rows]  # decided or not
         await pilot.press("tab")
-        assert s.kind == "want_to_apply" and s.rows == []
+        assert s.kind == "un_recommended" and [j["job_id"] for j in s.rows] == [jobs["sales"]]
+        await pilot.press("tab", "tab")
+        assert s.kind == "not_applied" and jobs["analyst"] in [j["job_id"] for j in s.rows]  # the n above
         await pilot.press("q")
 
 

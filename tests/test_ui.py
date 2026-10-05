@@ -26,7 +26,7 @@ async def test_function_keys_switch_sections_and_keep_their_state(env):  # noqa:
     async with app.run_test(size=(200, 50)) as pilot:
         assert isinstance(app.screen, JobsScreen) and not app.screen.audit_mode and app.section == "jobs"
         bar = str(app.screen.query_one("#sections").render())
-        assert "Jobs" in bar and "Audit" in bar and "Inbox" in bar and "F1 / F2 / F3" in bar
+        assert "Jobs" in bar and "Audit" in bar and "Apply" in bar and "F1 / F2 / F3" in bar
         jobs_screen = app.screen
         await pilot.press("slash", *"acme", "enter")  # a search in Jobs …
         await pilot.press("f2")
@@ -51,7 +51,7 @@ async def test_a_section_reloads_when_you_come_back(env):  # noqa: F811
         apps.run()  # (as `auto-app apply run` would, meanwhile)
         await pilot.press("f3")
         assert [r["job_id"] for r in app.screen.rows] == [jobs["ml"]]  # the inbox shows the new hand-off
-        assert "Inbox (1 waiting)" in str(app.screen.query_one("#sections").render())
+        assert "Apply (1 waiting)" in str(app.screen.query_one("#sections").render())
         await pilot.press("q")
 
 
@@ -65,7 +65,7 @@ async def test_switching_is_ignored_while_a_popup_is_open_and_missing_sections_s
         await pilot.press("escape", "f3")
         assert isinstance(app.screen, MessageScreen) and "policy broken" in str(app.screen.query_one("#why").render())
         names = [c.title for c in app.get_system_commands(app.screen)]
-        assert {"Go to Jobs", "Go to Audit", "Go to Inbox"} <= set(names)
+        assert {"Go to Jobs", "Go to Audit", "Go to Apply"} <= set(names)
         await pilot.press("q")
 
 
@@ -83,7 +83,7 @@ async def test_click_a_section_or_a_tab_and_brackets_cycle(env):  # noqa: F811
     async with app.run_test(size=(200, 50)) as pilot:
         bar = str(app.screen.query_one("#sections").render())
         assert "[ ] to switch" in bar
-        await pilot.click("#sections", offset=(bar.index("Inbox") + 1, 0))  # click "Inbox"
+        await pilot.click("#sections", offset=(bar.index("Apply") + 1, 0))  # click "Apply"
         assert app.section == "inbox"
         tabs = str(app.screen.query_one("#tabs").render())
         await pilot.click("#tabs", offset=(tabs.index("Done") + 1, 0))  # click a tab
@@ -105,7 +105,8 @@ async def test_question_mark_lists_the_sections_keys(env):  # noqa: F811
 
     db, jobs, apps, app = make(env)
     async with app.run_test(size=(200, 50)) as pilot:
-        assert app.screen.query_one("Footer").compact
+        keys = str(app.screen.query_one("#keys").render())  # the key bar: the main keys only, ? for the rest
+        assert "a want to apply" in keys and "? all keys" in keys and "m set state" not in keys and "palette" not in keys
         await pilot.press("question_mark")
         assert isinstance(app.screen, HelpScreen)
         rows = dict(app.screen.rows)
@@ -118,7 +119,76 @@ async def test_question_mark_lists_the_sections_keys(env):  # noqa: F811
         assert "d" in rows and "a" not in rows and "m" not in rows  # audit: only audit keys
         await pilot.press("escape", "f3", "question_mark")
         rows = dict(app.screen.rows)
-        assert "next applier" in rows["c"] and "r" not in rows  # inbox, Hand-offs tab: its keys only
+        texts = " | ".join(rows.values())
+        assert "start this job" in texts and "R" in rows and "A" not in rows and "c" not in rows  # inbox, Queued: its keys only
         await pilot.press("escape", "f1", "slash", "question_mark", "enter")  # ? is typed in a search box
         assert app.screen.search == "?"
+        await pilot.press("q")
+
+
+async def test_queue_in_jobs_then_start_in_the_inbox(env):  # noqa: F811
+    db, jobs, apps, app = make(env)
+    async with app.run_test(size=(200, 50)) as pilot:
+        s = app.screen
+        while s.current()["job_id"] != jobs["ml"]:
+            await pilot.press("down")
+        await pilot.press("a")
+        assert "→ Apply (F3) → Queued" in str(s.query_one("#status").render())
+        assert jobs["ml"] not in [j["job_id"] for j in s.rows]  # out of New recommended at once
+        await pilot.press("f3")
+        inbox = app.screen
+        assert inbox.kind == "queued" and [r["job_id"] for r in inbox.rows] == [jobs["ml"]]  # right away, before starting
+        assert "Apply (1 queued)" in str(inbox.query_one("#sections").render())
+        await pilot.press("R")
+        app.screen.start_thread.join(10)
+        await pilot.pause()
+        assert inbox.kind == "handoff" and [r["job_id"] for r in inbox.rows] == [jobs["ml"]]  # a Workday job → Simplify
+        await pilot.press("q")
+
+
+async def test_quitting_never_waits_for_starting_jobs_and_warns_during_a_submission(env):  # noqa: F811
+    import time
+
+    db, jobs, apps, app = make(env)
+    db.mark_job(jobs["ml"], "want_to_apply")
+    real_run = apps.run
+    apps.run = lambda *a, **k: (time.sleep(3), real_run(*a, **k))[1]  # a slow start (like Claude)
+    app.start = "inbox"
+    t0 = time.monotonic()
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.press("R")
+        await pilot.press("q")
+        await pilot.pause()
+        assert not app.is_running
+    assert time.monotonic() - t0 < 2.5  # didn't wait for the start to finish
+
+    db2, jobs2, apps2, app2 = make(env)
+    app2.start = "inbox"
+    async with app2.run_test(size=(200, 50)) as pilot:
+        app2.screen.busy.add(1)  # a submission in progress
+        await pilot.press("q")
+        assert app2.is_running and "press q again" in str(app2.screen.query_one("#status").render())
+        await pilot.press("q")
+        await pilot.pause()
+        assert not app2.is_running
+
+
+async def test_queued_tab_enter_starts_one_and_d_unqueues(env):  # noqa: F811
+    db, jobs, apps, app = make(env)
+    for k in ("ml", "analyst"):
+        db.mark_job(jobs[k], "want_to_apply")
+    app.start = "inbox"
+    async with app.run_test(size=(200, 50)) as pilot:
+        s = app.screen
+        assert s.kind == "queued" and {r["job_id"] for r in s.rows} == {jobs["ml"], jobs["analyst"]}
+        first = s.current()["job_id"]
+        await pilot.press("enter")  # start just this one
+        s.start_thread.join(10)
+        await pilot.pause()
+        assert [r["job_id"] for r in apps.rows()] == [first]
+        while s.kind != "queued":
+            await pilot.press("tab")
+        other = s.current()["job_id"]
+        await pilot.press("d")
+        assert db.job(other)["state"] == "not_applied" and s.rows == []
         await pilot.press("q")

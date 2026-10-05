@@ -12,13 +12,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 PLATFORMS = ("greenhouse", "lever", "ashby", "workday", "linkedin_easy_apply", "other")
-DEFAULT_CHAINS = {
-    "greenhouse": ["greenhouse", "simplify", "manual"],
-    "lever": ["lever", "simplify", "manual"],
-    "ashby": ["ashby", "simplify", "manual"],
-    "workday": ["simplify", "manual"],
-    "linkedin_easy_apply": ["simplify", "manual"],  # never automated
-    "*": ["simplify", "manual"],
+DEFAULT_CHAINS = {  # simplify_auto (Simplify's autofill, driven by the app) first; LinkedIn Easy Apply never automated
+    "greenhouse": ["simplify_auto", "greenhouse", "simplify", "manual"],
+    "lever": ["simplify_auto", "lever", "simplify", "manual"],
+    "ashby": ["simplify_auto", "ashby", "simplify", "manual"],
+    "workday": ["simplify_auto", "simplify", "manual"],
+    "linkedin_easy_apply": ["simplify", "manual"],
+    "*": ["simplify_auto", "simplify", "manual"],
 }
 NEVER_AUTOMATED = {"linkedin_easy_apply": {"simplify", "manual"}}  # LinkedIn bans accounts for automated applying
 

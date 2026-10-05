@@ -367,10 +367,10 @@ The model retrains whenever new labels arrive, so its data — and the evaluatio
 
 ## 8. Review
 
-You review in **`auto-app job browse`** — the **Jobs** section (F1) of `auto-app ui`, the one app for every interactive part (F2 Audit, F3 Step 3's Inbox) — a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below; it **opens on Recommended** by default (`--state` picks another tab). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
+You review in **`auto-app job browse`** — the **Jobs** section (F1) of `auto-app ui`, the one app for every interactive part (F2 Audit, F3 Apply — Step 3) — a **full-screen terminal app** (built with [Textual](https://textual.textualize.io/)) over the whole job pool: decide on recommended jobs and tell each filter whether it judged right. It has a tab per state; the three review tabs are below; it **opens on Recommended** by default (`--state` picks another tab). It started as a separate `filter review` command and was merged into `job browse` (2026-10-04), since its lists were a subset of the pool's tabs.
 
 ```
-┌ Recommended (23) · Un-recommended (41) · Want to apply (3) ─┬ #28 Research Scientist, AI Accelerator … ───────────────┐
+┌ New recommended (13) · All recommended (23) · Un-recommended ┬ #28 Research Scientist, AI Accelerator … ───────────────┐
 │ ▸ #28 NVIDIA      Research Scientist, AI Accel…   14d       │ NVIDIA · Austin, TX; Santa Clara, CA · posted 2026-02-05 │
 │   #24 ByteDance   Visual Generation & Multimod…   13d  👍   │ expires in 14 days · found on nvidia, linkedin           │
 │   #22 ByteDance   Research Scientist Graduate…    13d       │                                                          │
@@ -386,7 +386,7 @@ You review in **`auto-app job browse`** — the **Jobs** section (F1) of `auto-a
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Review tabs** (`tab` / `shift+tab`; among All, Not evaluated, Applied, Not applied, Archived): **Recommended** — undecided recommended jobs, the ones to decide on (default); **Un-recommended** — jobs every filter turned down, to catch wrong rejections; **Want to apply** — your queue, to review or withdraw. Each list is newest first, searchable (`/`), with marks for what you've answered: ★ want to apply, ✗ not applied, 👍 / 👎 your feedback. A job you answer stays in the list you answered it in (with its mark) until you leave the app, so you can change your mind; `-f NAME` limits the app to jobs those filters judged, and to their verdicts.
+**Review tabs** (`tab` / `shift+tab`; 2026-10-05: All · Not evaluated · New recommended · All recommended · Un-recommended · Applied · Not applied): **New recommended** — undecided recommended jobs, the ones to decide on (default; a decided job leaves it at once); **All recommended** — every recommended job, decided or not; **Un-recommended** — jobs every filter turned down, to catch wrong rejections. Your queue (want to apply) is Step 3's **Apply → Queued** tab. Each list is newest first, searchable (`/`), with marks for what you've answered: ★ want to apply, ✗ not applied, 👍 / 👎 your feedback. A decision moves the job to its tab at once (`u` undoes; `r` right after adds a reason); `-f NAME` limits the app to jobs those filters judged, and to their verdicts.
 
 **Detail pane** (the selected job; scrolls): what `job show` prints — company, locations, dates, expiry, postings, matching keys, Step 1 warnings ("looks like job #12, which you applied to"), **every filter that judged it** — its verdict, reason, what it looked up, and your feedback so far — then the full description. `o` opens the apply link in your browser.
 

@@ -25,8 +25,12 @@ def test_tabs_narrowing_and_counts(browser):
     assert ids(b.jobs("all")) == {jobs["ml"], jobs["sales"]}
     assert ids(b.jobs("recommended")) == {jobs["ml"]} and ids(b.jobs("un_recommended")) == {jobs["sales"]}
     assert ids(b.jobs("archived")) == {jobs["analyst"]}
-    assert b.counts() == {"all": 2, "not_evaluated": 0, "recommended": 1, "un_recommended": 1, "want_to_apply": 0,
-                          "applied": 0, "not_applied": 0, "archived": 1, "audit": 0, "audit_total": 0}
+    assert b.counts() == {"all": 2, "not_evaluated": 0, "recommended": 1, "all_recommended": 1, "un_recommended": 1,
+                          "want_to_apply": 0, "applied": 0, "not_applied": 0, "archived": 1, "audit": 0, "audit_total": 0}
+    db.mark_job(jobs["ml"], "want_to_apply")  # decided: out of New recommended, still in All recommended
+    assert ids(b.jobs("recommended")) == set() and ids(b.jobs("all_recommended")) == {jobs["ml"]}
+    db.mark_job(jobs["ml"], "applied")
+    assert ids(b.jobs("applied")) == {jobs["ml"]} and ids(b.jobs("all_recommended")) == {jobs["ml"]}
     assert ids(b.jobs("all", search="nvidia")) == {jobs["ml"], jobs["sales"]}  # sources are searched too
     b.sources = ["linkedin"]
     assert ids(b.jobs("all")) == set() and ids(b.jobs("archived")) == {jobs["analyst"]}
@@ -70,13 +74,11 @@ async def test_app_tabs_mark_menu_and_read_only(browser):
         assert s.rows == [] and "source: linkedin" in str(s.query_one("#tabs").render())
         await pilot.press("s", "ctrl+u", "enter")  # the box shows the current sources; cleared = every source
         assert len(s.rows) == 2
-        await pilot.press("shift+tab")
-        assert s.kind == "archived" and ids(s.rows) == {jobs["analyst"]}
-        await pilot.press("a")
-        assert "not decide on it" in str(s.query_one("#status").render())
-        assert db.job(jobs["analyst"])["decision"] == "applied"
-        await pilot.press("b")  # but labelling an archived job is fine: it's training data
-        assert db.feedback_of(jobs["analyst"])["ml"]["label"] is False
+        await pilot.press("shift+tab")  # wraps to the last tab
+        assert s.kind == "not_applied" and s.tabs == ("all", "not_evaluated", "recommended", "all_recommended",
+                                                      "un_recommended", "applied", "not_applied")
+        tabs = str(s.query_one("#tabs").render())
+        assert "New recommended" in tabs and "All recommended" in tabs and "Archived" not in tabs and "Want to apply" not in tabs
         await pilot.press("q")
 
 

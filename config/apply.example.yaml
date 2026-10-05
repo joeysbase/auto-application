@@ -9,12 +9,12 @@ pace:
   per_company_per_month: 3
 order: queued                   # queued (the order you chose) | newest_posting | by_filter
 appliers:                       # per platform: the chain, tried in order; when one can't, the next takes over
-  greenhouse: [greenhouse, simplify, manual]    # greenhouse / lever / ashby: not built yet — skipped for now
-  lever:      [lever, simplify, manual]
-  ashby:      [ashby, simplify, manual]
-  workday:    [simplify, manual]
-  linkedin_easy_apply: [simplify, manual]       # never automated
-  "*":        [simplify, manual]                # any other platform
+  greenhouse: [simplify_auto, greenhouse, simplify, manual]   # simplify_auto: Simplify's autofill driven by the app
+  lever:      [simplify_auto, lever, simplify, manual]        # (needs `auto-app apply login simplify` once)
+  ashby:      [simplify_auto, ashby, simplify, manual]        # lever / ashby: not built yet — skipped for now
+  workday:    [simplify_auto, simplify, manual]
+  linkedin_easy_apply: [simplify, manual]                     # never automated
+  "*":        [simplify_auto, simplify, manual]               # any other platform
 submit:                         # appliers that submit by themselves: review (you press submit) | auto
   greenhouse: review
   lever: review

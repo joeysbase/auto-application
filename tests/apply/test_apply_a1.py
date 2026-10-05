@@ -39,7 +39,8 @@ def test_profile_checks(tmp_path):
 
 def test_policy_defaults_checks_and_example(tmp_path):
     p, err = load_policy(tmp_path / "none.yaml")
-    assert err is None and p.chain("greenhouse") == ["greenhouse", "simplify", "manual"] and p.chain("other") == ["simplify", "manual"]
+    assert err is None and p.chain("greenhouse") == ["simplify_auto", "greenhouse", "simplify", "manual"]
+    assert p.chain("other") == ["simplify_auto", "simplify", "manual"] and p.chain("linkedin_easy_apply") == ["simplify", "manual"]
     assert load_policy(PROJECT_ROOT / "config" / "apply.example.yaml") == (ApplyPolicy(), None)  # the template = the defaults
     bad = ApplyPolicy(appliers={"linkedin_easy_apply": ["greenhouse", "manual"], "nowhere": ["simplify"], "*": ["zap"]})
     problems = check_policy(bad, {"simplify", "manual"}, {"greenhouse"})
@@ -64,7 +65,7 @@ def apps(env):  # noqa: F811
     for key in ("ml", "analyst"):
         db.mark_job(jobs[key], "want_to_apply")
     opened = []
-    policy = ApplyPolicy(appliers={"*": ["greenhouse", "simplify", "manual"]})  # greenhouse isn't built yet
+    policy = ApplyPolicy(appliers={"*": ["lever", "simplify", "manual"]})  # lever isn't built yet
     a = Applications(db, policy, registry(opener=opened.append, manual_opener=opened.append, revealer=opened.append), ttl=TTL)
     return db, a, jobs, opened
 
@@ -78,8 +79,8 @@ def test_run_falls_back_through_the_chain_to_a_handoff(apps):
     [app] = [r for r in a.rows() if r["job_id"] == jobs["ml"]]
     assert (app["status"], app["applier"], app["chain_pos"]) == ("handoff", "simplify", 1)
     tried = a.attempts(app["application_id"])
-    assert [(t["applier"], t["outcome"]) for t in tried] == [("greenhouse", "unsupported"), ("simplify", "handoff")]
-    assert "not built yet (A3)" in tried[0]["reason"]
+    assert [(t["applier"], t["outcome"]) for t in tried] == [("lever", "unsupported"), ("simplify", "handoff")]
+    assert "not built yet (A4)" in tried[0]["reason"]
     assert a.run() == {}  # nothing new to start
     assert "Simplify" in a.open(app["application_id"]) and opened == [app["apply_url"]]
 
@@ -102,6 +103,16 @@ def test_your_answers_on_handoffs_and_failures(apps, tmp_path):
     a.drop(an)
     assert a.get(an)["status"] == "dropped" and db.job(jobs["analyst"])["state"] == "not_applied"
     assert a.queue() == []
+    db.mark_job(jobs["ml"], "want_to_apply")  # changed your mind (m in Jobs): queued again, not stuck in Done
+    [j] = a.queue()
+    assert j["job_id"] == jobs["ml"] and j["application"] is None
+    [new] = a.enqueue()
+    assert new != ml and a.get(ml)["status"] == "submitted"  # the old one stays as history
+
+    a.couldnt(new)
+    a.policy = ApplyPolicy(appliers={"*": ["simplify", "manual"]})  # the policy changed since the application started
+    a.requeue(new)
+    assert a.get(new)["chain"] == ["simplify", "manual"] and a.get(new)["status"] == "queued"  # today's chain
 
 
 def test_a_failing_applier_is_retried_once_then_skipped(env):  # noqa: F811
@@ -112,12 +123,12 @@ def test_a_failing_applier_is_retried_once_then_skipped(env):  # noqa: F811
         name = "flaky"
         calls = 0
 
-        def prepare(self, app):
+        def prepare(self, app, ctx=None):
             Flaky.calls += 1
             raise TimeoutError("form didn't load")
 
     reg = {**registry(opener=lambda u: None), "flaky": Flaky()}
-    a = Applications(db, ApplyPolicy(appliers={"*": ["flaky", "manual"]}), reg)
+    a = Applications(db, ApplyPolicy(appliers={"*": ["flaky", "manual"]}), reg, ctx=object())
     assert a.run() == {"handoff": 1} and Flaky.calls == 2
     [app] = a.rows()
     assert [(t["applier"], t["outcome"]) for t in a.attempts(app["application_id"])] == \
@@ -131,7 +142,7 @@ async def test_inbox_tabs_keys_and_actions(apps):
     async with app.run_test(size=(180, 40)) as pilot:
         s = app.screen
         assert s.kind == "handoff" and len(s.rows) == 2 and "Hand-offs (2)" in str(s.query_one("#tabs").render())
-        assert s.check_action("applied", ()) and not s.check_action("retry", ())  # only this tab's keys
+        assert s.check_action("retry", ()) and not s.check_action("manual", ())  # only this tab's keys
         assert "Simplify" in str(s.query_one("#detail").render())
         await pilot.press("o")
         assert len(opened) == 1
@@ -161,13 +172,13 @@ def test_cli(apps, tmp_path, monkeypatch):
     r = CliRunner().invoke(app, ["apply", "profile"])
     assert r.exit_code == 0 and "ready to apply" in r.output and "Alex Doe" in r.output
     r = CliRunner().invoke(app, ["apply", "policy"])
-    assert r.exit_code == 0 and "greenhouse …" in r.output and "simplify ✓" in r.output and "the defaults" in r.output
+    assert r.exit_code == 0 and "greenhouse ✓" in r.output and "lever …" in r.output and "simplify ✓" in r.output and "the defaults" in r.output
     db_ = ["--db", str(db.db_path)]
     r = CliRunner().invoke(app, ["apply", "queue", *db_])
     assert r.exit_code == 0 and "2 queued" in r.output and "not started" in r.output
     r = CliRunner().invoke(app, ["apply", "run", "-j", str(jobs["ml"]), *db_])
     assert r.exit_code == 0 and "1 handoff" in r.output and "apply inbox" in r.output
     r = CliRunner().invoke(app, ["apply", "list", *db_])
-    assert r.exit_code == 0 and "handoff" in r.output and "(simplify, 1 attempt)" in r.output
+    assert r.exit_code == 0 and "handoff" in r.output and "(simplify, 2 attempts)" in r.output  # simplify_auto (not built yet) skipped first
     r = CliRunner().invoke(app, ["apply", "inbox", *db_])
     assert r.exit_code == 2 and "full-screen" in r.output

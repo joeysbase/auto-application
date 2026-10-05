@@ -14,7 +14,7 @@ want_to_apply ──► workers (several jobs at a time, paced by your apply pol
                                                          └──► submitted ──► job: applied
 ```
 
-Status: **A1 ✅** (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers, `apply inbox` with Hand-offs / Failed / Done — `src/auto_app/apply/`); A2–A7 designed. Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
+Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A7 designed. Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
 
 ---
 
@@ -139,7 +139,8 @@ When every applier in the chain is exhausted, the job lands in **Failed** in `ap
 
 | applier | how | parallel | submits |
 |---|---|---|---|
-| **simplify** (first) | **hand-off**: opens the job's apply link in **your** Chrome, where the [Simplify](https://simplify.jobs) extension autofills it; you check, attach anything missing, submit; then press *applied* / *couldn't* in `apply inbox` | no — one at a time, you at the keyboard | you |
+| **simplify_auto** (default first, 2026-10-04) | **automated**: Playwright's Chromium (branded Chrome 137+ won't load extensions under automation) with the Simplify Copilot extension copied from your Chrome and a dedicated profile you log in to once (`apply login simplify`); clicks Simplify's autofill, scans the form for required fields still empty (→ needs input), then review / submit like the Greenhouse applier. Your choice despite the risks: Simplify's terms may not allow automated use; its panel is undocumented and changes. Built (2026-10-04): starting a job is a headless dry run (§5) — "Start Application" on a description page, the consent notice answered "Essentials only" (`AUTO_APP_APPLY__SIMPLIFY_CONSENT`), "Autofill This Page", the gaps filled from profile / answers, the form read back; no panel → next applier | one at a time (one profile) | review / auto |
+| **simplify** (hand-off) | **hand-off**: opens the job's apply link in **your** Chrome, where the [Simplify](https://simplify.jobs) extension autofills it; you check, attach anything missing, submit; then press *applied* / *couldn't* in `apply inbox` | no — one at a time, you at the keyboard | you |
 | **manual** (always last) | opens the apply link and your CV; you apply; you press *applied* | no | you |
 | **greenhouse** | questions from the public job board API (`?questions=true`) — so preparing needs no browser; submits by filling the hosted form in an automated browser | yes | review / auto |
 | **lever** | reads and fills `jobs.lever.co/<company>/<id>/apply` (plain HTML form) | yes | review / auto |
@@ -175,7 +176,7 @@ Each question gets a **kind**, a **source** and a **confidence**:
 
 Holding a browser open while a job waits for you would time out and block the workers. So each application runs in **two passes**:
 
-1. **Prepare** — open the form (or the API), collect **every** question, answer what's possible, queue the rest. **Nothing is submitted.**
+1. **Prepare** — open the form (or the API), collect **every** question, answer what's possible, queue the rest. **Nothing is submitted.** As built (2026-10-04) this is a **dry run**: the automated applier fills the real form headless (Simplify's autofill, or the Greenhouse API's answers) and reads it back (`apply/form.py`): a required field still empty — unknown to the API, or an answer that didn't take — becomes an open question (needs input); all filled → ready. A multi-step form is read up to its first step only — Next sends the step to the site (Adobe: `POST applySubmit`), so the later steps are walked at submission, where a new question returns the job to needs input. Fields in a hidden section (a later step) aren't read. Labels come from `<label>`, aria, legend, or the text around a field (forms without labels, e.g. Rippling); radio groups take their question's text; a dropdown's own search box is skipped.
 2. **Submit** — once everything is answered (and reviewed, in review mode): open the form fresh, fill it in one go, upload the CV, submit, capture the confirmation.
 
 Multi-page forms (Workday) can reveal new questions on later pages; then the job goes back to needs input with just those, and resumes.
@@ -193,7 +194,7 @@ The job stays `want_to_apply` (and doesn't expire) until submitted; then `applie
 
 ## 6. `auto-app apply inbox` — the interactive app
 
-The **Inbox** section (F3) of `auto-app ui` — the one app for every interactive part (F1 Jobs, F2 Audit); `apply inbox` opens it there. Tabs for what needs you, each with a count:
+The **Apply** section (F3) of `auto-app ui` (called the Inbox until 2026-10-05) — the one app for every interactive part (F1 Jobs, F2 Audit); `apply inbox` opens it there. Tabs for what needs you, each with a count:
 
 | tab | each item | your keys |
 |---|---|---|
@@ -250,8 +251,8 @@ auto-app apply list [--status S]           # application history
 | # | Deliverable |
 |---|---|
 | A1 ✅ | `profile.yaml` / `answers.yaml` / `apply.yaml` loaders + checks (`apply profile`, `apply policy`, templates); `applications` / `attempts` / `questions` tables; `apply queue`; the applier interface and chain runner (fallback, retries, outcomes); **Simplify hand-off** and **manual** appliers; `apply inbox` with Hand-offs, Failed, Done; job → `applied` — usable from day one for every platform. As built: `apply run` is one-shot (opens applications, moves each to its first working applier); the posting-still-open check and the pace apply to automated submission, so they come with A3 / A5 (a hand-off shows you the page); a chain naming an applier that isn't built yet skips it, recorded as "not built yet"; a failed application isn't reopened by `apply run` — retry it in the inbox; the `questions` table comes with A2 |
-| A2 | Questions: kinds, answer matching by meaning (confidence), sensitive-only-from-bank, choice mapping; **Needs input** tab (answer once for all, save to `answers.yaml`); notifications |
-| A3 | **Greenhouse** applier: prepare from the API, submit in the browser; **Ready to submit** review; Action needed |
+| A2 ✅ | Questions: kinds, answer matching by meaning (confidence), sensitive-only-from-bank, choice mapping; **Needs input** tab (answer once for all, save to `answers.yaml`); notifications. As built (A2): one Claude CLI call per application (no tools); a question on `answers.yaml` matched exactly needs no call; optional unanswered questions are left blank; Claude may also choose a dropdown option the profile clearly answers (source `claude`, shown in review); desktop notifications not yet |
+| A3 ✅ | **Greenhouse** applier: prepare from the API, submit in the browser; **Ready to submit** review; Action needed. As built: submission only when you press `s` (auto mode is A5); `f` fill only (a visible browser for you to submit); the CV is uploaded first (Greenhouse refills name / email from it) and text is re-checked at the end; React dropdowns opened with the keyboard and the option clicked ("United States" matches "United States +1"); a closed posting (API 404) stops without fallback; a form it can't fill falls back to the next applier. Checked on a real Greenhouse form, filled and **not** submitted; the submit path is tested offline (fake form: confirmation, validation failure, CAPTCHA → action needed) |
 | A4 | **Lever** and **Ashby** appliers |
 | A5 | Auto-submit per platform (policy `submit: auto`), pace window and per-company limits enforced |
 | A6 | **Workday** applier (accounts, multi-page, new questions mid-way) |

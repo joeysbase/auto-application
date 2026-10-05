@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from playwright.async_api import BrowserContext, Page, Playwright, Response
 from playwright.async_api import Error as PlaywrightError
 
+from auto_app.core.browser_env import browser_env
 from auto_app.core.models import CapturedResponse
 
 log = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class BrowserSession:
     async def __aenter__(self) -> "BrowserSession":
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.profile_dir.chmod(0o700)
-        kwargs = dict(headless=self.headless, viewport=VIEWPORT)
+        kwargs = dict(headless=self.headless, viewport=VIEWPORT, env=browser_env())
         try:
             self.context = await self.pw.chromium.launch_persistent_context(
                 str(self.profile_dir), channel="chrome", **kwargs

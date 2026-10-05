@@ -505,7 +505,7 @@ def job_browse(
     source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only jobs found on this source (repeatable; `s` in the app)")] = None,
     company: Annotated[Optional[str], typer.Option("--company", "-c", help="Only jobs whose company contains this text (`c` in the app)")] = None,
     state: Annotated[Optional[str], typer.Option(
-        help="Open on this tab: recommended (default) | all | not_evaluated | un_recommended | want_to_apply | applied | not_applied | archived")] = None,
+        help="Open on this tab: recommended (new recommended, default) | all | not_evaluated | all_recommended | un_recommended | applied | not_applied")] = None,
     filter_: Annotated[Optional[list[str]], typer.Option("--filter", "-f", help="Only jobs these filters judged, and only their verdicts (repeatable)")] = None,
     directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
     config: ConfigOpt = None,
@@ -1315,15 +1315,23 @@ def filter_eval(
 # ---- Step 3: apply ------------------------------------------------------------------------------------
 
 def _applications(cfg: AppConfig, store, opener=None):
-    from auto_app.apply.appliers import registry
+    from auto_app.apply.appliers import ApplyContext, registry
+    from auto_app.apply.matcher import claude_matcher
     from auto_app.apply.policy import load_policy
+    from auto_app.apply.profile import load_me
     from auto_app.apply.queue import Applications
 
-    policy, problem = load_policy(get_paths().apply_policy)
+    paths = get_paths()
+    policy, problem = load_policy(paths.apply_policy)
     if problem:
         typer.echo(f"✗ {problem} — fix it (`auto-app apply policy`)", err=True)
         raise typer.Exit(2)
-    return Applications(store, policy, registry(opener), ttl=cfg.jobs.ttl_days)
+    me = load_me(paths.home)
+    ctx = None if me.problems else ApplyContext(
+        me=me, matcher=claude_matcher(cfg.apply.claude_cli, cfg.apply.model), threshold=cfg.apply.match_threshold,
+        headless=cfg.apply.headless, browser_profile=paths.profile("apply"), answers_file=paths.me / "answers.yaml",
+        browser_profiles=paths.profiles, simplify_consent=cfg.apply.simplify_consent)
+    return Applications(store, policy, registry(opener), ttl=cfg.jobs.ttl_days, ctx=ctx)
 
 
 @apply_app.command("profile")
@@ -1357,6 +1365,57 @@ def apply_policy():
         raise typer.Exit(1)
 
 
+@apply_app.command("login")
+def apply_login(
+    service: Annotated[str, typer.Argument(help="simplify")],
+):
+    """Log in once, in the browser the automated appliers use (simplify: Simplify, with its extension loaded)."""
+    if service != "simplify":
+        raise typer.BadParameter("only `simplify` for now", param_hint="SERVICE")
+    from playwright.sync_api import sync_playwright
+
+    from auto_app.apply.simplify_browser import LOGIN_URL, launch, profile_in_use
+
+    pid = profile_in_use(get_paths().profiles / "simplify")
+    if pid:
+        typer.echo(f"A browser on the Simplify profile is still open (pid {pid}) — close that Chrome window first (or "
+                   f"run: kill {pid}), then run this again.", err=True)
+        raise typer.Exit(1)
+    for stale in ("SingletonLock", "SingletonCookie", "SingletonSocket"):  # left by a browser that was killed
+        (get_paths().profiles / "simplify" / stale).unlink(missing_ok=True)
+    typer.echo("A Chrome window opens on Simplify's login page, with the extension. Log in (if “Continue with "
+               "Google” is refused, use your email), click the extension's icon to check you're logged in, then close "
+               "the window.")
+    try:
+        with sync_playwright() as pw:
+            ctx = launch(pw, get_paths().profiles, quiet=True)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.goto(LOGIN_URL)
+            page.bring_to_front()
+            # wait until you close the window (the browser goes when its last page does); poll — robust to the
+            # extension opening and closing its own tabs
+            while ctx.pages:
+                try:
+                    ctx.pages[0].wait_for_timeout(1000)
+                except Exception:  # the window was closed mid-wait
+                    break
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2)
+    except Exception as e:
+        log = get_paths().logs / "simplify-login.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(f"{type(e).__name__}: {e}\n")
+        lines = str(e).splitlines()
+        in_use = any("in use" in x.lower() or "singleton" in x.lower() for x in lines)
+        typer.echo(f"The browser couldn't start: {type(e).__name__}" + (
+            " — the Simplify profile is in use by another browser; quit it and try again" if in_use else ""), err=True)
+        typer.echo("last lines of the browser log (all of it in " + str(log) + "):\n  " + "\n  ".join(lines[-15:]),
+                   err=True)
+        raise typer.Exit(1)
+    typer.echo(f"saved in {get_paths().profiles / 'simplify'}")
+
+
 @apply_app.command("queue")
 def apply_queue(config: ConfigOpt = None, out: OutOpt = None):
     """The jobs you queued (want to apply), in the policy's order, with each one's platform, applier chain and status."""
@@ -1381,7 +1440,8 @@ def apply_run(
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
-    """Start applications for the queued jobs: each goes through its applier chain (A1: to a hand-off in the inbox)."""
+    """Start applications for the queued jobs: each goes through its applier chain — the form is filled headless and read
+    back (nothing submitted): questions left → Needs input, all answered → Ready to submit, else a hand-off."""
     from auto_app.apply.profile import load_me
 
     cfg = _config_or_env(config)
@@ -1449,7 +1509,7 @@ _ORDER = {
     filter_app: ["list", "show", "run", "why", "audit", "eval", "reparse"],
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],
-    apply_app: ["profile", "policy", "queue", "run", "inbox", "list"],
+    apply_app: ["profile", "policy", "login", "queue", "run", "inbox", "list"],
 }
 for _group, _names in _ORDER.items():
     _group.registered_commands.sort(key=lambda c: _names.index(c.name))
