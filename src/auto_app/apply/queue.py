@@ -163,6 +163,8 @@ class Applications:
         todo = [app for app in self.rows(("queued",)) if not job_ids or app["job_id"] in job_ids]
         counts: dict[str, int] = {}
         for i, app in enumerate(todo):
+            if app["chain_pos"] == 0:  # starting from the top (new, or sent back with r): today's policy's chain
+                self._set(app["application_id"], chain=self.policy.chain(app.get("platform") or platform_of(app.get("apply_url"))))
             if progress:
                 progress(app["job_id"], None, i, len(todo))
             status = self.advance(app["application_id"])

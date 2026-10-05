@@ -1330,7 +1330,9 @@ def _applications(cfg: AppConfig, store, opener=None):
     ctx = None if me.problems else ApplyContext(
         me=me, matcher=claude_matcher(cfg.apply.claude_cli, cfg.apply.model), threshold=cfg.apply.match_threshold,
         headless=cfg.apply.headless, browser_profile=paths.profile("apply"), answers_file=paths.me / "answers.yaml",
-        browser_profiles=paths.profiles, simplify_consent=cfg.apply.simplify_consent)
+        browser_profiles=paths.profiles, simplify_consent=cfg.apply.simplify_consent, agent_model=cfg.apply.agent_model,
+        agent_time_limit_start_s=cfg.apply.agent_time_limit_start_min * 60,
+        agent_time_limit_submit_s=cfg.apply.agent_time_limit_submit_min * 60, logs=paths.logs)
     return Applications(store, policy, registry(opener), ttl=cfg.jobs.ttl_days, ctx=ctx)
 
 

@@ -39,8 +39,8 @@ def test_profile_checks(tmp_path):
 
 def test_policy_defaults_checks_and_example(tmp_path):
     p, err = load_policy(tmp_path / "none.yaml")
-    assert err is None and p.chain("greenhouse") == ["simplify_auto", "greenhouse", "simplify", "manual"]
-    assert p.chain("other") == ["simplify_auto", "simplify", "manual"] and p.chain("linkedin_easy_apply") == ["simplify", "manual"]
+    assert err is None and p.chain("greenhouse") == ["greenhouse", "agent", "simplify", "manual"]
+    assert p.chain("other") == ["agent", "simplify", "manual"] and p.chain("linkedin_easy_apply") == ["simplify", "manual"]
     assert load_policy(PROJECT_ROOT / "config" / "apply.example.yaml") == (ApplyPolicy(), None)  # the template = the defaults
     bad = ApplyPolicy(appliers={"linkedin_easy_apply": ["greenhouse", "manual"], "nowhere": ["simplify"], "*": ["zap"]})
     problems = check_policy(bad, {"simplify", "manual"}, {"greenhouse"})
@@ -109,6 +109,13 @@ def test_your_answers_on_handoffs_and_failures(apps, tmp_path):
     [new] = a.enqueue()
     assert new != ml and a.get(ml)["status"] == "submitted"  # the old one stays as history
 
+    a.policy = ApplyPolicy(appliers={"*": ["manual"]})  # changed before it started: a start uses today's chain
+    a.run()
+    assert a.get(new)["chain"] == ["manual"]
+    a.requeue(new)  # sent back (with attempts already) and the policy changed again: still today's chain
+    a.policy = ApplyPolicy(appliers={"*": ["simplify", "manual"]})
+    a.run()
+    assert a.get(new)["chain"] == ["simplify", "manual"]
     a.couldnt(new)
     a.policy = ApplyPolicy(appliers={"*": ["simplify", "manual"]})  # the policy changed since the application started
     a.requeue(new)

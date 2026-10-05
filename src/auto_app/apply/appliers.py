@@ -7,7 +7,7 @@
 Built: **greenhouse** (automated: questions from its API, the form filled in a browser — greenhouse.py), and the two
 hand-off appliers, which cover every platform: **simplify** (the apply link in your Chrome, where the Simplify
 extension autofills it — you submit) and **manual** (the apply link and your CV — you apply). The others (lever,
-ashby, workday, generic) are *planned*: a chain naming them skips them ("not built yet") and falls back to the next.
+ashby, workday) are *planned*: a chain naming them skips them ("not built yet") and falls back to the next.
 """
 
 import subprocess
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-PLANNED = {"lever": "A4", "ashby": "A4", "workday": "A6", "generic": "A7"}
+PLANNED = {"lever": "A4", "ashby": "A4", "workday": "A6"}
 
 
 def platform_of(url: str | None) -> str:
@@ -123,16 +123,23 @@ class ApplyContext:
     browser_profiles: Path | None = None  # browser-profiles/ (the Simplify browser's profile lives there)
     simplify_consent: str = "essentials"  # Simplify's one-time consent notice: essentials | accept
     dry_run: bool = True  # starting a job fills the real form headless and reads it back
+    agent_model: str = "claude-opus-5-5"  # the browser-agent applier (docs/step3-agent.md)
+    agent_time_limit_start_s: float = 600
+    agent_time_limit_submit_s: float = 1200
+    logs: Path | None = None  # data/logs/ (the agent writes a log per run under agent/)
 
 
 def registry(opener=None, manual_opener=None, revealer=None, http=None, filler=None, dry_runner=None,
-             simplify_context=None, simplify_route=None) -> dict[str, Applier]:
+             simplify_context=None, simplify_route=None, agent_driver=None, agent_browser=None,
+             agent_route=None) -> dict[str, Applier]:
     """The built appliers, by name (openers, the HTTP client, the form filler / dry run and the Simplify browser
     injectable for tests)."""
+    from auto_app.apply.agent.applier import AgentApplier
     from auto_app.apply.greenhouse import GreenhouseApplier
     from auto_app.apply.simplify import SimplifyAutoApplier
 
-    return {"simplify_auto": SimplifyAutoApplier(open_context=simplify_context, route=simplify_route),
+    return {"agent": AgentApplier(driver=agent_driver, open_browser=agent_browser, route=agent_route),
+            "simplify_auto": SimplifyAutoApplier(open_context=simplify_context, route=simplify_route),
             "greenhouse": GreenhouseApplier(http=http, filler=filler, dry_runner=dry_runner),
             "simplify": SimplifyHandoff(**({"opener": opener} if opener else {})),
             "manual": ManualApplier(**{k: v for k, v in (("opener", manual_opener), ("revealer", revealer)) if v})}

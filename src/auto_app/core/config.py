@@ -230,6 +230,10 @@ class ApplyConfig(BaseModel):
     match_threshold: Annotated[float, Field(gt=0, le=1)] = 0.9  # below this, a matched answer goes to you
     headless: bool = False  # the submit browser: visible by default (CAPTCHAs, logins go to you)
     simplify_consent: Literal["essentials", "accept"] = "essentials"  # Simplify's one-time "Before you autofill" notice
+    # the browser-agent applier (docs/step3-agent.md): its model and its time limit per run (no token budget)
+    agent_model: str = "claude-opus-5-5"
+    agent_time_limit_start_min: Annotated[float, Field(gt=0)] = 10  # starting a job (a dry run)
+    agent_time_limit_submit_min: Annotated[float, Field(gt=0)] = 20  # fill only / submit
 
 
 class AppConfig(BaseModel):

@@ -12,13 +12,14 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 PLATFORMS = ("greenhouse", "lever", "ashby", "workday", "linkedin_easy_apply", "other")
-DEFAULT_CHAINS = {  # simplify_auto (Simplify's autofill, driven by the app) first; LinkedIn Easy Apply never automated
-    "greenhouse": ["simplify_auto", "greenhouse", "simplify", "manual"],
-    "lever": ["simplify_auto", "lever", "simplify", "manual"],
-    "ashby": ["simplify_auto", "ashby", "simplify", "manual"],
-    "workday": ["simplify_auto", "simplify", "manual"],
+DEFAULT_CHAINS = {  # the browser agent first (docs/step3-agent.md) — after Greenhouse's API applier on Greenhouse;
+    # simplify_auto stays available (name it in config/apply.yaml); LinkedIn Easy Apply is never automated
+    "greenhouse": ["greenhouse", "agent", "simplify", "manual"],
+    "lever": ["agent", "lever", "simplify", "manual"],
+    "ashby": ["agent", "ashby", "simplify", "manual"],
+    "workday": ["agent", "simplify", "manual"],
     "linkedin_easy_apply": ["simplify", "manual"],
-    "*": ["simplify_auto", "simplify", "manual"],
+    "*": ["agent", "simplify", "manual"],
 }
 NEVER_AUTOMATED = {"linkedin_easy_apply": {"simplify", "manual"}}  # LinkedIn bans accounts for automated applying
 

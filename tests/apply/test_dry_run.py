@@ -71,6 +71,7 @@ def chrome(pw, headless=True):
 
 
 URL = "https://jobs.example.com/apply/1"
+SIMPLIFY = ApplyPolicy(appliers={"*": ["simplify_auto", "simplify", "manual"]})  # (the agent is the default now)
 
 
 def test_scan_and_reconcile(tmp_path):
@@ -118,7 +119,7 @@ def simplify_apps(env, tmp_path):  # noqa: F811
     me = load_me(me_home(tmp_path / "home"))
     ctx = ApplyContext(me=me, matcher=lambda *a: {}, browser_profiles=tmp_path)
     reg = registry(opener=lambda u: None, simplify_context=chrome, simplify_route=routes(simplify=True))
-    return db, Applications(db, ApplyPolicy(), reg, ttl=TTL, ctx=ctx), jobs
+    return db, Applications(db, SIMPLIFY, reg, ttl=TTL, ctx=ctx), jobs
 
 
 def test_simplify_auto_start_needs_input_then_submit(simplify_apps):
@@ -147,7 +148,7 @@ def test_simplify_auto_falls_back_when_its_panel_is_missing(env, tmp_path):  # n
     S.autofill = lambda page, consent="essentials", **kw: S_autofill(page, consent, appear_s=2)
     try:
         reg = registry(opener=lambda u: None, simplify_context=chrome, simplify_route=routes(simplify=False))
-        a = Applications(db, ApplyPolicy(), reg, ttl=TTL, ctx=ApplyContext(me=me, browser_profiles=tmp_path))
+        a = Applications(db, SIMPLIFY, reg, ttl=TTL, ctx=ApplyContext(me=me, browser_profiles=tmp_path))
         assert a.run() == {"handoff": 1}
         [app] = a.rows()
         tried = a.attempts(app["application_id"])
@@ -249,7 +250,7 @@ def test_simplify_auto_goes_through_a_multi_step_form(env, tmp_path):  # noqa: F
         ctx.route("**/apply/2/confirmation", lambda r: r.fulfill(content_type="text/html", body="<h1>Thank you for applying</h1>"))
     me = load_me(me_home(tmp_path / "home"))
     reg = registry(opener=lambda u: None, simplify_context=chrome, simplify_route=route)
-    a = Applications(db, ApplyPolicy(), reg, ttl=TTL, ctx=ApplyContext(me=me, matcher=lambda *a: {}, browser_profiles=tmp_path))
+    a = Applications(db, SIMPLIFY, reg, ttl=TTL, ctx=ApplyContext(me=me, matcher=lambda *a: {}, browser_profiles=tmp_path))
     assert a.run() == {"needs_input": 1}
     [app] = a.rows()
     i = app["application_id"]
@@ -273,7 +274,7 @@ def test_a_new_question_on_a_later_step_comes_back_to_you(env, tmp_path):  # noq
         ctx.route("**/apply/3", lambda r: r.fulfill(content_type="text/html", body=page))
     me = load_me(me_home(tmp_path / "home"))
     reg = registry(opener=lambda u: None, simplify_context=chrome, simplify_route=route)
-    a = Applications(db, ApplyPolicy(), reg, ttl=TTL, ctx=ApplyContext(me=me, matcher=lambda *a: {}, browser_profiles=tmp_path))
+    a = Applications(db, SIMPLIFY, reg, ttl=TTL, ctx=ApplyContext(me=me, matcher=lambda *a: {}, browser_profiles=tmp_path))
     a.run()
     [app] = a.rows()
     i = app["application_id"]

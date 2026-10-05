@@ -79,6 +79,18 @@ STANDARD_LABELS = {"linkedin profile": "links.linkedin", "linkedin": "links.link
                    "current company": "experience.0.company", "current employer": "experience.0.company",
                    "current title": "experience.0.title", "school": "education.0.school", "degree": "education.0.degree"}
 
+# a field known only by its label (the agent, forms without Greenhouse's field names) → the standard field it is
+LABEL_IDS = {"first name": "first_name", "given name": "first_name", "legal first name": "first_name",
+             "last name": "last_name", "family name": "last_name", "surname": "last_name", "legal last name": "last_name",
+             "preferred name": "preferred_name", "preferred first name": "preferred_name",
+             "email": "email", "email address": "email", "e mail": "email",
+             "phone": "phone", "phone number": "phone", "mobile": "phone", "mobile phone": "phone",
+             "mobile number": "phone", "telephone": "phone", "resume": "resume", "cv": "resume", "resume cv": "resume"}
+
+
+def standard_id(label: str) -> str | None:
+    return LABEL_IDS.get(norm(label))
+
 
 def _get(data, path: str):
     for part in path.split("."):

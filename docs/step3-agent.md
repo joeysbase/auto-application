@@ -1,6 +1,7 @@
 # Step 3 — the browser-agent applier (`agent`, milestone A7)
 
-Status: 📐 **designed** (2026-10-05). Part of [Step 3 — Apply](step3-apply.md); it replaces the "generic (later)" row
+Status: **A7.1 ✅** (2026-10-05: tools, guards, start mode — `src/auto_app/apply/agent/`; as built, §14); A7.2–A7.4
+📐 designed. Part of [Step 3 — Apply](step3-apply.md); it replaces the "generic (later)" row
 of §3 there and moves it up the chain.
 
 **Goal:** apply through any application form, however it's built, without per-site rules. A Claude agent looks at the
@@ -161,7 +162,7 @@ The prompt states the rules; the tools enforce them, so a confused or misled age
 
 | # | Deliverable |
 |---|---|
-| A7.1 | Tools (§3), guards (§5), start mode; the agent loop on the Agent SDK with Opus 5.5 on your Claude Code login (verified); offline tests with a scripted model |
+| A7.1 ✅ | Tools (§3), guards (§5), start mode; the agent loop on the Agent SDK with Opus 5.5 on your Claude Code login (verified); offline tests with a scripted model |
 | A7.2 | Real start-mode runs on the test set; logs, progress, attempt summaries; fixes from what it hits |
 | A7.3 | Fill only / submit through every step; later-step questions back to Needs input; accounts (§6: `apply account set`, Keychain, `fill_secret`, action_needed for verification) |
 | A7.4 | The comparison (§10); you decide the chains; README / docs updated with the results |
@@ -189,3 +190,38 @@ The prompt states the rules; the tools enforce them, so a confused or misled age
 5. **The agent creates and signs in to accounts with the email and password you provide** (Keychain; typed by
    `fill_secret`, never seen by the model). Email / SMS verification is yours (action_needed).
 6. **Start mode never clicks Next or submit**; fill only and submit go through every step; only `s` submits.
+
+## 14. As built (A7.1, 2026-10-05)
+
+**Code:** `src/auto_app/apply/agent/`:
+- `snapshot.py`: the page view (JS run in every frame);
+- `session.py`: the tools, the guards' enforcement, what was filled and asked, the last check;
+- `guards.py`: what may be clicked, where the browser may go;
+- `driver.py`: Claude through the Agent SDK, with the prompt;
+- `applier.py`: `AgentApplier`, the browser, the outcome.
+
+**Verified on your Claude Code login:** the Agent SDK (`claude-agent-sdk` 0.2.163) runs Opus 5.5 with only our tools (`tools=[]`, `setting_sources=[]`, `ANTHROPIC_API_KEY` emptied). Claude Code also uses a little Haiku internally.
+
+**First real-model run** (on a fake page, so no real site): Opus 5.5 started on a job description and clicked "Apply now". It asked `answer_for` about every field at once, typed the name and email, picked "Yes" for sponsorship (from answers.yaml), and attached the CV. It sent the 4 questions nobody could answer to you, including one inside an embedded frame. It didn't click Next. 28 s, about 34k tokens.
+
+**Changes from the design:**
+- **The agent's browser runs on Playwright's async API.** The sync API can't run inside the SDK's event loop. The browser is your Chrome with a dedicated profile, `browser-profiles/agent/` (Playwright's Chromium if Chrome is missing), started without `DYLD_*` and with the automation markers hidden.
+- **`draft` is part of `answer_for`:** free-text questions come back as drafts (source `draft`, ✎).
+- **`fill_secret` and accounts come with A7.3**, together with fill only / submit. In A7.1, `submit` answers "not yet". Fill only keeps the job in Ready with that reason, and `s` hands it to the next applier.
+- **The default since 2026-10-05** (your call, before A7.2): the chains of §1 are the defaults — `greenhouse → agent → simplify → manual`, `agent → simplify → manual` elsewhere; no `config/apply.yaml` needed. Until A7.3, `s` on a job the agent prepared hands it to the Simplify hand-off, and `f` says "not yet". In tests, an agent without a scripted model never runs (`tests/conftest.py`).
+- **The snapshot is our own JS, not Playwright MCP's.** It shows roles, accessible names (from `<label>`, aria, and the text around a field for forms without labels), required / invalid / disabled, values, a native select's options, checked state, and a radio's or grouped checkbox's question (`of “…”`). It also includes headings, alerts and step markers. Refs are `e12` in the page and `f2e5` in frame 2. Password values show as `••••`. Hidden sections (later steps) aren't listed.
+- **Guards:** `click` refuses a final submit outside submit mode, with one nuance: an "Apply" link or button is final only as the button of a filled form, otherwise it leads to the form. `click` also refuses Next in start mode. Navigation off the job's site (and the ATS list in `guards.py`) is aborted and the tab goes back. Sensitive fields take only the answer `answer_for` gave; anything else is refused with "ask the user".
+- **The last check:** after `done`, a final snapshot. A required field still empty and not asked becomes a question ("required and still empty on the form", or "“X” didn't take").
+- **Answers by label:** `questions.standard_id` maps labels like "First Name" / "Email address" / "Phone number" to the profile's standard fields.
+- **Outcomes in start mode:** done(ready / needs_input) becomes ready or needs_input, with "step 1 of a multi-step form; the next steps are filled when you submit" when `more_steps`. A timeout, a crash, or no `done` becomes `unsupported`, so the next applier takes over without a retry. action_needed and unsupported pass through. The reason ends with the minutes and tokens.
+- **Settings:** `AUTO_APP_APPLY__AGENT_MODEL` (claude-opus-5-5), `…_AGENT_TIME_LIMIT_START_MIN` (10), `…_AGENT_TIME_LIMIT_SUBMIT_MIN` (20).
+- **Logs:** `data/logs/agent/<application>-<time>.jsonl`, one line per tool call, with secrets masked.
+
+**Tests:** `tests/apply/test_agent.py`, offline (Playwright routes, a scripted model). It covers:
+- the snapshot: labels, the text around a field, radio groups, frames, secrets, hidden sections;
+- the tools, and what they record;
+- every guard, including going back after a blocked navigation;
+- a description page leading to the form;
+- the time limit;
+- start mode end to end through the queue: needs_input, the last check catching a missed required field;
+- the SDK tool handlers: errors returned to the model, screenshots, logs.

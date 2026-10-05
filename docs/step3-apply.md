@@ -14,7 +14,7 @@ want_to_apply ──► workers (several jobs at a time, paced by your apply pol
                                                          └──► submitted ──► job: applied
 ```
 
-Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A6 designed; **A7, the browser-agent applier, designed in detail in [step3-agent.md](step3-agent.md)** (2026-10-05) — the next to build. Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
+Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A6 designed; **A7, the browser-agent applier — [step3-agent.md](step3-agent.md): A7.1 ✅ (2026-10-05: tools, guards, starting a job), A7.2–A7.4 next.** Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
 
 ---
 
@@ -139,7 +139,7 @@ When every applier in the chain is exhausted, the job lands in **Failed** in `ap
 
 | applier | how | parallel | submits |
 |---|---|---|---|
-| **simplify_auto** (default first, 2026-10-04) | **automated**: Playwright's Chromium (branded Chrome 137+ won't load extensions under automation) with the Simplify Copilot extension copied from your Chrome and a dedicated profile you log in to once (`apply login simplify`); clicks Simplify's autofill, scans the form for required fields still empty (→ needs input), then review / submit like the Greenhouse applier. Your choice despite the risks: Simplify's terms may not allow automated use; its panel is undocumented and changes. Built (2026-10-04): starting a job is a headless dry run (§5) — "Start Application" on a description page, the consent notice answered "Essentials only" (`AUTO_APP_APPLY__SIMPLIFY_CONSENT`), "Autofill This Page", the gaps filled from profile / answers, the form read back; no panel → next applier | one at a time (one profile) | review / auto |
+| **simplify_auto** (default first 2026-10-04; out of the defaults 2026-10-05 — the agent took its place) | **automated**: Playwright's Chromium (branded Chrome 137+ won't load extensions under automation) with the Simplify Copilot extension copied from your Chrome and a dedicated profile you log in to once (`apply login simplify`); clicks Simplify's autofill, scans the form for required fields still empty (→ needs input), then review / submit like the Greenhouse applier. Your choice despite the risks: Simplify's terms may not allow automated use; its panel is undocumented and changes. Built (2026-10-04): starting a job is a headless dry run (§5) — "Start Application" on a description page, the consent notice answered "Essentials only" (`AUTO_APP_APPLY__SIMPLIFY_CONSENT`), "Autofill This Page", the gaps filled from profile / answers, the form read back; no panel → next applier | one at a time (one profile) | review / auto |
 | **simplify** (hand-off) | **hand-off**: opens the job's apply link in **your** Chrome, where the [Simplify](https://simplify.jobs) extension autofills it; you check, attach anything missing, submit; then press *applied* / *couldn't* in `apply inbox` | no — one at a time, you at the keyboard | you |
 | **manual** (always last) | opens the apply link and your CV; you apply; you press *applied* | no | you |
 | **greenhouse** | questions from the public job board API (`?questions=true`) — so preparing needs no browser; submits by filling the hosted form in an automated browser | yes | review / auto |
@@ -256,7 +256,7 @@ auto-app apply list [--status S]           # application history
 | A4 | **Lever** and **Ashby** appliers |
 | A5 | Auto-submit per platform (policy `submit: auto`), pace window and per-company limits enforced |
 | A6 | **Workday** applier (accounts, multi-page, new questions mid-way) |
-| A7 | **Browser-agent applier** — [step3-agent.md](step3-agent.md): A7.1 tools, guards, start mode (offline tests) · A7.2 real start-mode runs · A7.3 fill only / submit through every step, accounts · A7.4 comparison with `simplify_auto`, then the chain order |
+| A7 | **Browser-agent applier** — [step3-agent.md](step3-agent.md): A7.1 ✅ tools, guards, start mode (offline tests; a real-model run on a fake page) · A7.2 real start-mode runs · A7.3 fill only / submit through every step, accounts · A7.4 comparison with `simplify_auto`, then the chain order |
 | — | Deferred: tailored CVs and cover letters (§11) |
 
 ## 11. Deferred: tailored CVs

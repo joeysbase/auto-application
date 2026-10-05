@@ -6,6 +6,21 @@ def no_notifications(monkeypatch):
     monkeypatch.setattr("auto_app.collect.runner.notify", lambda *a, **k: None)
 
 
+@pytest.fixture(autouse=True)
+def no_real_agent(monkeypatch):
+    """The browser agent is the default applier: in tests, one without a scripted model never starts Chrome or Claude."""
+    from auto_app.apply.agent.applier import AgentApplier
+    from auto_app.apply.appliers import Outcome
+
+    real = AgentApplier.prepare
+
+    def prepare(self, app, ctx=None):
+        if self.driver is None:
+            return Outcome("unsupported", "agent: not run in tests")
+        return real(self, app, ctx)
+    monkeypatch.setattr(AgentApplier, "prepare", prepare)
+
+
 @pytest.fixture(params=["files", "db"])
 def store(request, tmp_path):
     """Each test using `store` runs twice: against the file store and against the database."""
