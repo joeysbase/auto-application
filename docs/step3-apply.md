@@ -14,7 +14,7 @@ want_to_apply ──► workers (several jobs at a time, paced by your apply pol
                                                          └──► submitted ──► job: applied
 ```
 
-Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A7 designed. Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
+Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A6 designed; **A7, the browser-agent applier, designed in detail in [step3-agent.md](step3-agent.md)** (2026-10-05) — the next to build. Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
 
 ---
 
@@ -146,7 +146,7 @@ When every applier in the chain is exhausted, the job lands in **Failed** in `ap
 | **lever** | reads and fills `jobs.lever.co/<company>/<id>/apply` (plain HTML form) | yes | review / auto |
 | **ashby** | reads the form definition from the page's data; fills it | yes | review / auto |
 | **workday** (later) | per-company account — **one email for every company** (`profile.yaml`), each company's password generated and kept in the **macOS Keychain** (never in files); email verification → action needed; multi-page wizard | yes, slow | review / auto |
-| **generic** (later) | an LLM browser agent for unknown forms | yes, slow and costly | review only |
+| **agent** (A7, designed 2026-10-05 — [step3-agent.md](step3-agent.md)) | a **Claude browser agent** (Opus 5.5, on your Claude Code login): generic browser tools (accessibility snapshot, click, type, select, upload) as its hands, our code for the guards (no submit outside `s`, no Next in start mode, stay on the application, sensitive fields only from answers.yaml) and your answers; creates / signs in to accounts with your email and Keychain password; first in every chain except Greenhouse (after the API applier) and LinkedIn Easy Apply | one at a time (one browser) | review / auto |
 
 - The **Simplify hand-off** covers every platform from day one; automated appliers take over platform by platform, each falling back to Simplify, then to manual.
 - Automated appliers use a dedicated, git-ignored Chrome profile in the project folder (`browser-profiles/apply/`), headless where the site allows, visible when something needs you.
@@ -256,7 +256,7 @@ auto-app apply list [--status S]           # application history
 | A4 | **Lever** and **Ashby** appliers |
 | A5 | Auto-submit per platform (policy `submit: auto`), pace window and per-company limits enforced |
 | A6 | **Workday** applier (accounts, multi-page, new questions mid-way) |
-| A7 | **Generic** LLM browser-agent applier (review only) |
+| A7 | **Browser-agent applier** — [step3-agent.md](step3-agent.md): A7.1 tools, guards, start mode (offline tests) · A7.2 real start-mode runs · A7.3 fill only / submit through every step, accounts · A7.4 comparison with `simplify_auto`, then the chain order |
 | — | Deferred: tailored CVs and cover letters (§11) |
 
 ## 11. Deferred: tailored CVs
@@ -280,5 +280,7 @@ Decided:
 1. **Answer matching and drafting use Claude through the Claude Code CLI** (§4), locked down like Step 2's runner; strict threshold to start, tuned from your corrections.
 2. **Workday:** one email for every company's account; passwords in the macOS Keychain.
 3. **"Action needed" pauses only that job**; the site's other jobs carry on.
+
+Decided (2026-10-05): the **browser-agent applier** (A7) comes next — generic browser tools, our guards, Opus 5.5, no token budget but a time limit, accounts created with your information; see [step3-agent.md §13](step3-agent.md#13-decisions-2026-10-05).
 
 Open: none yet — new ones are added as A1–A3 are built.

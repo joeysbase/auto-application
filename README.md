@@ -721,7 +721,8 @@ Works through your **want to apply** queue (jobs you marked `a` in `job browse`)
 | `simplify` | ✅ | **hand-off**: opens the apply link in **your Chrome**, where the [Simplify](https://simplify.jobs) extension autofills the form; you check, submit, then press `a` in `apply inbox` |
 | `manual` | ✅ | **hand-off**, always last: opens the apply link and shows your CV in Finder; you apply, then press `a` |
 | `greenhouse` | ✅ | **automated**: reads the job's questions from Greenhouse's public API, answers them (below), asks you what's left (**Needs input**); once complete it's **Ready to submit** — you check every answer, then the app fills the form in a browser (CV first, then text and dropdowns) and submits it, or fills it for you to submit. A closed posting stops (no fallback); a form it can't fill falls back to Simplify |
-| `lever`, `ashby`, `workday`, `generic` | planned | automated, like greenhouse (A4–A7); until built, chains skip them (recorded as "not built yet") |
+| `agent` | 📐 designed — next to build ([`docs/step3-agent.md`](docs/step3-agent.md)) | a **Claude browser agent** (Opus 5.5, your Claude Code login) that works out any form: generic browser tools as its hands, our code for the rules — never submits outside `s`, never clicks Next in a dry run, stays on the application, fills sensitive questions only from `answers.yaml`; creates / signs in to site accounts with your email and Keychain password (never shown to the model); a time limit per run |
+| `lever`, `ashby`, `workday` | planned | automated, like greenhouse (A4–A6); until built, chains skip them (recorded as "not built yet") |
 
 LinkedIn Easy Apply is never automated. The app submits only when you press `s` on a ready application (auto-submit comes with A5).
 
