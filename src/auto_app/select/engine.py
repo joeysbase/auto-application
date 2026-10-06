@@ -52,6 +52,8 @@ class SelectReport:
     recommended_jobs: int = 0
     un_recommended_jobs: int = 0
     lines: list[str] = field(default_factory=list)
+    failures: list[tuple[int, str, str]] = field(default_factory=list)  # (job_id, filter, error) — for `serve`
+    succeeded: dict[str, int] = field(default_factory=dict)  # filter → judgments that worked (ok / unparsed)
 
 
 def applies(flt: Filter, scope: set[str]) -> bool:
@@ -65,6 +67,7 @@ def plan(store, filters: list[Filter], opts: SelectOptions) -> list[tuple[int, F
     done: dict[tuple[int, str], dict[str, str]] = {}  # (job, filter) → {version: status}
     for r in store.judgment_rows():
         done.setdefault((r["job_id"], r["filter"]), {})[r["filter_version"]] = r["status"]
+    gave_up = unjudgeable(store)  # (job, filter) pairs that failed too often: skipped (`--job N` retries them)
     pairs, picked_jobs = [], []
     if opts.jobs is not None:
         wanted = set(opts.jobs)
@@ -75,6 +78,8 @@ def plan(store, filters: list[Filter], opts: SelectOptions) -> list[tuple[int, F
         job_pairs = []
         for flt in filters:
             if not applies(flt, scopes.get(j["job_id"], set())):
+                continue
+            if (j["job_id"], flt.name) in gave_up and opts.jobs is None:
                 continue
             versions = done.get((j["job_id"], flt.name), {})
             status = versions.get(flt.version)
@@ -88,12 +93,27 @@ def plan(store, filters: list[Filter], opts: SelectOptions) -> list[tuple[int, F
     return pairs
 
 
+def unjudgeable(store) -> set[tuple[int, str]]:
+    """(job, filter) pairs given up on (docs/step4-run.md §2.3)."""
+    if not hasattr(store, "engine"):
+        return set()
+    from sqlalchemy import select as sql
+
+    from auto_app.core.db import tables as T
+
+    t = T.judge_tries
+    with store.engine.connect() as conn:
+        return {(r.job_id, r.filter) for r in conn.execute(sql(t.c.job_id, t.c.filter).where(t.c.unjudgeable_at.is_not(None)))}
+
+
 def decide_job(store, job_id: int, filters: list[Filter], scope: set[str]) -> str | None:
-    """recommended / un_recommended from the current-version judgments, or None while undecided."""
+    """recommended / un_recommended from the current-version judgments, or None while undecided. A filter that gave up
+    on the job (unjudgeable) doesn't count."""
     current = {(r["filter"], r["filter_version"]): r for r in store.judgment_rows(job_id=job_id)}
+    gave_up = {f for j, f in unjudgeable(store) if j == job_id}
     verdicts = []
     for flt in filters:
-        if not applies(flt, scope):
+        if not applies(flt, scope) or flt.name in gave_up:
             continue
         r = current.get((flt.name, flt.version))
         if r is None or r["status"] == "error":
@@ -261,8 +281,11 @@ def _record(store, rep: SelectReport, touched: list, job_id: int, flt: Filter, d
         rep.cost_unknown += 1
     else:
         rep.cost += cost
+    if result.status != "error":
+        rep.succeeded[flt.name] = rep.succeeded.get(flt.name, 0) + 1
     if result.status == "error":
         rep.errors += 1
+        rep.failures.append((job_id, flt.name, str(result.error or "")))
         verdict = f"error: {result.error}"
     elif not parsed.ok:
         rep.unparsed += 1

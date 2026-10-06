@@ -204,6 +204,9 @@ def format_batch(store, batch_id: str | None) -> str:
             f"{src:<10} status={s['status']:<16} pages={s['pages_loaded']:<4} details={s['details_fetched']:<4} "
             f"outcomes={s['outcomes']} stops={s['stop_reasons']}"
         )
+        if "caught_up" in s:  # the round's goal (docs/step4-run.md §2.1)
+            out.append(f"{'':<10} " + ("caught up — every search saw everything new" if s["caught_up"] else
+                                       f"not caught up — stopped by {s.get('goal_hit') or 'its limits / errors'}"))
         if s.get("rate_pauses"):
             out.append(f"{'':<10} rate pauses: {s['rate_pauses']} ({s['rate_paused_minutes']} min)")
         if s.get("error"):

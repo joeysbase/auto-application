@@ -29,6 +29,8 @@ class StopReason(StrEnum):
     EMPTY = "empty"
     ERROR = "error"
     INTERRUPTED = "interrupted"  # stopped by the user (Ctrl+C)
+    TIME_LIMIT = "time_limit"  # the round's time cap (or this search's share of it) — docs/step4-run.md §2.1
+    GOAL = "goal"  # the round's volume cap (max new postings / pages)
 
 
 class Card(BaseModel):

@@ -99,10 +99,17 @@ class ApiCollector(CollectorBase):
         )
         ctx = HttpContext(client, self.plugin.requests_per_second, fast=self.opts.fast)
         try:
-            for search in self.task.searches:
+            searches = self.task.searches
+            for i, search in enumerate(searches):
                 if reason := self.rate.day_exhausted():
                     log.info("%s: %s; skipping remaining searches until a later run", self.name, reason)
+                    self.skipped_searches += len(searches) - i
                     break
+                if self.budget is not None:
+                    if self.budget.exhausted() is not None:
+                        self.budget.skipped_searches += len(searches) - i
+                        break
+                    self.budget.start_query(len(searches) - i)
                 await self._run_search(ctx, search)
             if self.status == "ok":
                 self.mark_ok()
@@ -129,6 +136,9 @@ class ApiCollector(CollectorBase):
             counts["listed"] = len(jobs)
             rank = 0
             for job in jobs:
+                if self.budget is not None and (over := self.budget.query_over()) is not None:
+                    stop = over  # the round's time / volume — not caught up
+                    break
                 reason = self.plugin.local_filter(job, search)
                 if reason:
                     counts["not_matching"] += 1
@@ -138,8 +148,12 @@ class ApiCollector(CollectorBase):
                 outcome, detail = await self._handle(ctx, card, job, search, run_id)
                 counts[outcome] += 1
                 self.stats[outcome] += 1
+                if self.budget is not None and outcome == Outcome.FETCHED:
+                    self.budget.new_postings += 1
                 self.sighting(run_id, search.name, card, outcome, detail)
-            stop = StopReason.BUDGET if self.rate.day_exhausted() and counts[Outcome.BUDGET_SKIPPED] else StopReason.DONE
+            if stop is None:
+                stop = (StopReason.BUDGET if self.rate.day_exhausted() and counts[Outcome.BUDGET_SKIPPED]
+                        else StopReason.DONE)
         except SoftFailure as e:
             log.warning("%s run %d stopped: %s", self.name, run_id, e)
             self.error = str(e)

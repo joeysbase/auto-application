@@ -231,3 +231,18 @@ async def test_plugin_can_end_the_results_early(env, site, monkeypatch):
     [run] = store.get_search_runs(batch["batch_id"])
     assert run["stop_reason"] == "done" and run["pages_loaded"] == 1  # page 2 (104, 105 …) is never opened
     assert {r["source_job_id"] for r in store.get_sightings(batch["batch_id"])} == {"101", "102", "103"}
+
+
+async def test_round_goal_on_a_browser_source(env, site):
+    from auto_app.collect.goal import RoundGoal
+
+    store, make = env
+    batch = await make(goal=RoundGoal(max_new_postings=2)).run(["fake"])
+    src = batch["sources"]["fake"]
+    assert src["outcomes"].get("fetched") == 2  # stopped at the cap …
+    assert src["stop_reasons"] == {"goal": 1} and src["caught_up"] is False and src["goal_hit"] == "goal"
+
+    batch = await make(goal=RoundGoal(time_limit_s=600), retry=False).run(["fake"])
+    src = batch["sources"]["fake"]  # … the next round finds the rest and catches up (known streak / end)
+    assert src["caught_up"] is True and src["goal_hit"] is None
+    assert src["outcomes"].get("fetched", 0) >= 1

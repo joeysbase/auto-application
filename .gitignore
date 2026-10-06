@@ -10,6 +10,7 @@ out/
 # personal config, browser logins, and collected data
 config/searches.yaml
 config/apply.yaml
+config/serve.yaml
 browser-profiles/
 data/
 

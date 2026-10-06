@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import os
 import re
 import sys
 from datetime import datetime, timedelta
@@ -253,10 +255,14 @@ def run(
     force: Annotated[bool, typer.Option(help="Ignore source cooldowns")] = False,
     manual_checks: Annotated[bool, typer.Option(help="Wait for you to complete security checks in the window")] = False,
     scheduled: Annotated[bool, typer.Option(help="Enforce run window and minimum interval; notify when done (for launchd)")] = False,
+    time_limit: Annotated[Optional[str], typer.Option("--time-limit", help="The round's time cap per source, spread across its searches (e.g. 30m, 1h); stops early once caught up")] = None,
+    max_new: Annotated[Optional[int], typer.Option("--max-new", help="The round's cap on new postings per source")] = None,
+    round_pages: Annotated[Optional[int], typer.Option("--round-pages", help="The round's cap on result pages per source")] = None,
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
-    """The whole of Step 1: collect → parse → normalize → dedup (→ purge)."""
+    """The whole of Step 1: collect → parse → normalize → dedup (→ purge). A round ends when every search is caught up
+    (it reached postings already collected), or at --time-limit / --max-new / --round-pages."""
     from auto_app.core.notify import notify
     from auto_app.pipeline import RunLocked, format_pipeline, run_lock, run_pipeline
 
@@ -267,7 +273,16 @@ def run(
     do_collect = collect_
     if scheduled and do_collect and not _apply_schedule(cfg, store, sel, tasks):
         do_collect = False  # nothing may collect right now; still process what's saved
-    opts = CollectOptions(headless=headless, max_pages=max_pages, force=force, manual_checks=manual_checks)
+    from auto_app.collect.goal import RoundGoal
+    from auto_app.core.duration import parse_duration
+
+    try:
+        goal = RoundGoal(time_limit_s=parse_duration(time_limit) if time_limit else None, max_new_postings=max_new,
+                         max_pages=round_pages)
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--time-limit")
+    opts = CollectOptions(headless=headless, max_pages=max_pages, force=force, manual_checks=manual_checks,
+                          goal=goal if goal.any else None)
     try:
         with run_lock(get_paths().home / "data" / "run.lock"):
             res = asyncio.run(run_pipeline(cfg, get_paths(), store, opts, sel, default_registry(),
@@ -727,21 +742,12 @@ def _select(
                 if j.get("decision"):
                     typer.echo(f"job #{job_id}: you already decided ({j['decision']}) — judged for `filter why`, "
                                f"its state won't change", err=True)
-    import os
-    import shutil
-
-    from auto_app.select.runner import api_runner
-    from auto_app.select.runner_cli import run_claude_cli
-
-    from auto_app.select.runner_deepseek import is_deepseek, run_deepseek
+    from auto_app.select.runner_deepseek import is_deepseek
+    from auto_app.select.setup import SetupError, make_runner, runner_kind
 
     deepseek_filters = [f for f in chosen if is_deepseek(f.config.model)]
     claude_filters = [f for f in chosen if not is_deepseek(f.config.model)]
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    deepseek_key = os.environ.get("DEEPSEEK_API_KEY") or ""
-    kind = cfg.select.runner
-    if kind == "auto":
-        kind = "api" if has_key else "claude-cli"
+    kind = runner_kind(cfg)
     if max_cost is not None:
         priced = claude_filters if kind == "api" else []
         unpriced = sorted({f.config.model for f in priced + deepseek_filters} - set(cfg.select.prices))
@@ -755,36 +761,15 @@ def _select(
                        f"so it runs with web_fetch / read_file only", err=True)
     runner = None
     if not dry_run:
-        claude_runner = deepseek_runner = None
-        if deepseek_filters:
-            if not deepseek_key:
-                typer.echo(f"filters {[f.name for f in deepseek_filters]} use DeepSeek models but DEEPSEEK_API_KEY "
-                           f"is not set — put it in .env", err=True)
-                raise typer.Exit(2)
-            base = cfg.select.deepseek_base_url
-            deepseek_runner = lambda flt, prompt, **kw: run_deepseek(flt, prompt, deepseek_key, base, **kw)  # noqa: E731
-            typer.echo(f"runner for {[f.name for f in deepseek_filters]}: DeepSeek API (DEEPSEEK_API_KEY)")
-        if claude_filters:
-            if kind == "api":
-                if not has_key:
-                    typer.echo("AUTO_APP_SELECT__RUNNER=api but ANTHROPIC_API_KEY is not set — put it in .env, "
-                               "or use your Claude Code login (runner auto / claude-cli)", err=True)
-                    raise typer.Exit(2)
-                import anthropic
+        try:
+            runner = make_runner(cfg, chosen, say=typer.echo)
+        except SetupError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(2)
+    if jobs and hasattr(store, "engine"):  # judged again: a fresh start (tries, unjudgeable)
+        from auto_app.select.health import clear
 
-                claude_runner = api_runner(anthropic.Anthropic(max_retries=4))
-                typer.echo("runner: Claude API (ANTHROPIC_API_KEY)")
-            else:
-                cli = cfg.select.claude_cli
-                if not shutil.which(cli):
-                    typer.echo(f"no ANTHROPIC_API_KEY and no `{cli}` CLI found — put the key in .env, or install "
-                               f"Claude Code and log in (or set AUTO_APP_SELECT__CLAUDE_CLI to its path)", err=True)
-                    raise typer.Exit(2)
-                claude_runner = lambda flt, prompt, **kw: run_claude_cli(flt, prompt, cli, **kw)  # noqa: E731
-                typer.echo(f"runner: Claude Code CLI (`{cli}`, your login — usage counts against your subscription)")
-
-        def runner(flt, prompt, **kw):
-            return (deepseek_runner if is_deepseek(flt.config.model) else claude_runner)(flt, prompt, **kw)
+        clear(store, jobs)
 
     from auto_app.select.progress_view import make_progress
 
@@ -1591,6 +1576,199 @@ def apply_list(
                    f"({r.get('applier') or '—'}, {tried} attempt{'s' if tried != 1 else ''})")
 
 
+# ---- serve: the app running by itself (docs/step4-run.md) ---------------------------------------------------
+
+serve_app = typer.Typer(help="Run by itself: collect in rounds (until caught up), filter each round's jobs as a batch, "
+                             "pause, repeat — docs/step4-run.md.", no_args_is_help=True)
+app.add_typer(serve_app, name="serve")
+
+
+def _serve_paths():
+    p = get_paths()
+    return p.home / "config" / "serve.yaml", p.home / "data" / "serve.json"
+
+
+def _serve_config():
+    from auto_app.serve import load_serve_config
+
+    path, _ = _serve_paths()
+    try:
+        return load_serve_config(path)
+    except Exception as e:
+        typer.echo(f"{path}: {e}", err=True)
+        raise typer.Exit(2)
+
+
+@serve_app.command("run")
+def serve_run(
+    once: Annotated[bool, typer.Option("--once", help="One round now (if it may start), then exit")] = False,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """The loop, in the foreground (launchd runs this — `serve install`). Ctrl-C stops it; what's saved stays."""
+    import fcntl
+
+    from auto_app.collect.plan import Selection
+    from auto_app.core.notify import notify
+    from auto_app.pipeline import RunLocked, run_lock, run_pipeline
+    from auto_app.select.engine import SelectOptions, run_select
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+    from auto_app.select.setup import SetupError, make_runner
+    from auto_app.serve import BrokenFilters, NotNow, Serve, State, format_round, keep_awake
+
+    cfg = _config(config)
+    store = _store(out, cfg)
+    _require_db(store, "`serve`")
+    scfg = _serve_config()
+    _, state_path = _serve_paths()
+    paths = get_paths()
+    lock_file = open(paths.home / "data" / "serve.lock", "a+")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        typer.echo("`serve` is already running (data/serve.lock) — `auto-app serve status`", err=True)
+        raise typer.Exit(3)
+    all_sources = [t.source for t in _tasks(cfg, Selection())]
+
+    def collect(sources, goals):
+        opts = CollectOptions(headless=scfg.headless, source_goals=goals)
+        sel = Selection(sources=sources) if sources is not None else Selection()
+        if sources == []:
+            return {}, 0
+        try:
+            with run_lock(paths.home / "data" / "run.lock"):
+                res = asyncio.run(run_pipeline(cfg, paths, store, opts, sel, default_registry(), collect=True))
+        except RunLocked as e:
+            raise RuntimeError(f"{e} — a manual `auto-app run` is collecting; this round skips")
+        return res.batch or {}, res.new_jobs
+
+    def judge():
+        fs = load_filters(FILTERS_DIR)
+        if fs.broken:
+            raise BrokenFilters({n: f"doesn't load: {why}" for n, why in fs.broken.items()})
+        chosen = list(fs.filters.values())
+        if not chosen:
+            raise BrokenFilters({"(none)": "no filters in filters/ — nothing can be judged"})
+        try:
+            runner = make_runner(cfg, chosen)
+        except SetupError as e:
+            raise BrokenFilters({"(runner)": str(e)})
+        return run_select(store, cfg, chosen, runner,
+                          SelectOptions(parallel=scfg.filter.workers or cfg.select.parallel))
+
+    import signal
+    import threading
+
+    def force_exit():  # the clean stop didn't finish in time (a browser driver's tasks hang on): leave anyway
+        State(state_path).update(status="not running", pid=None)
+        if awake:
+            awake.terminate()
+        logging.shutdown()
+        os._exit(0)
+
+    def on_stop(signum, frame):  # Ctrl-C, or launchd stopping the service (SIGTERM)
+        threading.Timer(15, force_exit).start()  # everything collected is saved already: nothing is lost
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, on_stop)
+    signal.signal(signal.SIGINT, on_stop)
+    awake = None
+    awake = keep_awake()
+    serve = Serve(scfg, State(state_path), collect, judge, notify, store=store,
+                  rounds_log=paths.logs / "serve-rounds.jsonl")
+    typer.echo(f"serve: rounds until caught up (cap {scfg.round.time_limit or 'none'}), then a {scfg.interval} pause · "
+               f"window {scfg.window.days} {scfg.window.start}–{scfg.window.end} · state {state_path}")
+    try:
+        serve.run_forever(all_sources, once=once)
+        if once:
+            typer.echo(format_round(State(state_path).read().get("last_round") or {}))
+    except NotNow as e:
+        typer.echo(f"no round now: {e}")
+    except KeyboardInterrupt:
+        typer.echo("\nstopped — everything saved so far is kept")
+    finally:
+        State(state_path).update(status="not running", pid=None)
+        if awake:
+            awake.terminate()
+        logging.shutdown()
+        # leave now: a stop mid-collect can leave the browser driver's tasks behind, which would keep the process alive
+        os._exit(0)
+
+
+@serve_app.command("status")
+def serve_status():
+    """What `serve` is doing: running / paused / stopped, the next round, the last round's report."""
+    from auto_app.serve import State, describe
+
+    _, state_path = _serve_paths()
+    typer.echo(describe(_serve_config(), State(state_path).read()))
+
+
+@serve_app.command("pause")
+def serve_pause(
+    until: Annotated[Optional[str], typer.Option("--until", help="Until when: a time (2026-10-07 09:00, 09:00) or a "
+                                                                 "duration (2h, 30m); default: until you resume")] = None,
+):
+    """No new rounds (judging what's queued goes on)."""
+    from auto_app.core.duration import parse_duration
+    from auto_app.serve import State
+
+    _, state_path = _serve_paths()
+    st = State(state_path)
+    if until is None:
+        st.update(paused=True, paused_until=None)
+        typer.echo("paused until you resume (`auto-app serve resume`)")
+        return
+    now = datetime.now()
+    try:
+        when = now + timedelta(seconds=parse_duration(until))
+    except ValueError:
+        try:
+            when = datetime.fromisoformat(until) if len(until) > 5 else datetime.combine(
+                now.date(), datetime.strptime(until, "%H:%M").time())
+            if when <= now and len(until) <= 5:
+                when += timedelta(days=1)
+        except ValueError:
+            raise typer.BadParameter(f"not a time or duration: {until!r}", param_hint="--until")
+    st.update(paused=None, paused_until=when.isoformat(timespec="minutes"))
+    typer.echo(f"paused until {when:%Y-%m-%d %H:%M}")
+
+
+@serve_app.command("resume")
+def serve_resume():
+    """Rounds again: after a pause, or after you fixed a broken filter (then the backlog is judged first)."""
+    from auto_app.serve import State
+
+    _, state_path = _serve_paths()
+    st = State(state_path)
+    was = st.read()
+    st.update(paused=None, paused_until=None, stopped=None, usage_until=None,
+              filter_pending=True if was.get("stopped") else None)
+    typer.echo("resumed" + (" — the backlog is judged first, then the next round" if was.get("stopped") else ""))
+
+
+@serve_app.command("install")
+def serve_install(dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the launchd plist; install nothing")] = False):
+    """Keep `serve run` running in the background (macOS launchd, KeepAlive): it starts at log-in and after a crash."""
+    import plistlib
+
+    from auto_app import serve as sv
+
+    plist = sv.build_plist()
+    if dry_run:
+        typer.echo(plistlib.dumps(plist).decode())
+        return
+    path = sv.install(plist)
+    typer.echo(f"installed {path} — `auto-app serve status`; log: data/logs/serve.log")
+
+
+@serve_app.command("remove")
+def serve_remove():
+    """Stop and remove the background `serve`."""
+    from auto_app import serve as sv
+
+    typer.echo("removed" if sv.remove() else "not installed")
+
+
 # Subcommands are listed in workflow order, not in the order they're defined above.
 _ORDER = {
     source_app: ["list", "show", "add", "login", "health", "plan"],
@@ -1601,6 +1779,7 @@ _ORDER = {
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],
     apply_app: ["profile", "policy", "login", "accounts", "queue", "run", "inbox", "list"],
+    serve_app: ["run", "status", "pause", "resume", "install", "remove"],
 }
 for _group, _names in _ORDER.items():
     _group.registered_commands.sort(key=lambda c: _names.index(c.name))

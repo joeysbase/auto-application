@@ -5,6 +5,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta
 
+from auto_app.collect.goal import caught_up
 from auto_app.collect.guard import HardBlock, NeedsLogin
 from auto_app.collect.pacer import DAY, RateLimiter
 from auto_app.core.models import Card, Outcome, StopReason, utcnow
@@ -31,6 +32,9 @@ class CollectorBase:
         self.status = "ok"
         self.error: str | None = None
         self.manual_checks = 0
+        self.skipped_searches = 0  # never started (the daily limit)
+        goal = (getattr(self.opts, "source_goals", None) or {}).get(name) or getattr(self.opts, "goal", None)
+        self.budget = goal.budget() if goal is not None and goal.any else None  # the round's share (collect/goal.py)
 
     # ---- health ---------------------------------------------------------------------
 
@@ -86,7 +90,22 @@ class CollectorBase:
             "rate_pauses": len(self.rate.pauses),
             "rate_paused_minutes": round(sum(self.rate.pauses) / 60, 1),
             "manual_checks": self.manual_checks,
+            # the round's goal (docs/step4-run.md §2.1): did every search see everything new?
+            "caught_up": self.status == "ok" and caught_up(
+                self.stop_reasons, self.skipped_searches + (self.budget.skipped_searches if self.budget else 0)),
+            "goal_hit": self._goal_hit(),
         }
+
+    def _goal_hit(self) -> str | None:
+        """What of the round's goal stopped this source: the whole budget, or a search's time share / a cap."""
+        if self.budget is None:
+            return None
+        if self.budget.hit:
+            return str(self.budget.hit)
+        for r in (StopReason.TIME_LIMIT, StopReason.GOAL):
+            if self.stop_reasons.get(r):
+                return str(r)
+        return None
 
     def start_run(self, search_name: str, params: dict, url: str | None) -> int:
         return self.store.start_search_run(

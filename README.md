@@ -17,7 +17,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
   - [`collect`](#collect--step-1a-run-the-searches) — `run`, `probe`, `stats`
   - [`process`](#process--step-1b-postings--jobs) — `parse`, `normalize`, `dedup`
   - [`ui`](#ui--every-interactive-part-in-one-app) — Jobs (F1), Audit (F2), Apply (F3)
-  - [`run` and `schedule`](#run-and-schedule--all-of-step-1-automatically)
+  - [`run`, `serve` and `schedule`](#run-and-schedule--all-of-step-1-automatically)
   - [`job`](#job--the-job-pool) — `list`, `show`, `browse`, `mark`
   - [`filter`](#filter--step-2-judge-jobs-with-your-filters) — `list`, `show`, `run`, `why`, `audit`, `eval`, `reparse`
   - [`apply`](#apply--step-3-apply-to-the-jobs-you-queued) — `profile`, `policy`, `queue`, `run`, `inbox`, `list`
@@ -417,11 +417,40 @@ The whole of Step 1 in one command: **collect → parse → normalize → dedup*
 | `--no-collect` | skip collecting; only process what's saved |
 | `--purge` | apply retention at the end |
 | `--scheduled` | respect `run_window` / `min_hours_between_runs` and send a notification when done (used by the schedule) |
+| `--time-limit 30m` | the round's **time cap per source**, spread across its searches (each gets the time left ÷ the searches left). Ends early once every search is **caught up**, i.e. it reached postings already collected or the end of its results |
+| `--max-new N` · `--round-pages N` | the round's caps per source: new postings, result pages |
+
+With a goal, each source's summary says **caught up**, or **not caught up — stopped by time_limit / goal**. The next round finds the rest.
 
 ```bash
 uv run auto-app run
 uv run auto-app run --companies --purge
 uv run auto-app run --no-collect
+```
+
+#### `serve` — the app running by itself
+One long-running loop (design: [`docs/step4-run.md`](docs/step4-run.md)): **collect** (`auto-app run`, until every search is caught up, or the time cap), then **judge the round's new jobs as one batch** (`filter run`), then a **pause counted from the end of collecting**. The next round also waits until the batch is judged, so collecting never outpaces filtering. Rounds only run inside your daily window.
+
+**When filtering can't keep up:**
+- **No usage left** (Claude Code, API or DeepSeek limits): judging waits until the reset the error names (otherwise it retries every 15 min), and so does collecting. You get one notice, and it resumes by itself.
+- **A job failing 3 times** for a filter that otherwise works becomes **unjudgeable** and stops blocking. `filter run --job N` gives it a fresh start.
+- **A broken filter** (a config that won't load, a login or API key rejected, an unknown model, or 3 different jobs failing with none working): **you're notified at once and collecting stops** until you fix it and run `serve resume`, which judges the backlog first.
+
+A round with new recommendations sends a notification ("ask Claude Code"). Each round's report goes into `serve status` and `data/logs/serve-rounds.jsonl`, for example `round 09:00–09:10 · linkedin: caught up, 37 new / 6 pages · 41 judged (5 recommended) · next round ≈ 09:40`. State lives in `data/serve.json`; the settings in `config/serve.yaml` (template `config/serve.example.yaml`: window, round cap, pause, jitter, per-source `time_limit` / `every` / `enabled: false`, filter tries).
+
+| command | |
+|---|---|
+| `serve run` | the loop in the foreground (`--once`: one round now, or why not). `Ctrl-C` / SIGTERM stops it within 15 s (what's collected is saved). Holds `data/serve.lock`; a manual `auto-app run` during collecting waits for the next round |
+| `serve install` · `serve remove` | keep it running in the background (launchd KeepAlive: starts at log-in, restarts after a crash; `--dry-run` shows the plist); log `data/logs/serve.log` |
+| `serve status` | running / paused / stopped, the next round, the last round's report |
+| `serve pause [--until 2h \| 09:00 \| 2026-10-07 09:00]` · `serve resume` | no new rounds (judging goes on); resume after a pause, or after fixing a broken filter |
+
+```bash
+uv run auto-app serve run --once
+uv run auto-app serve install
+uv run auto-app serve status
+uv run auto-app serve pause --until 2h
+uv run auto-app serve resume
 ```
 
 #### `schedule install` · `schedule show` · `schedule remove`

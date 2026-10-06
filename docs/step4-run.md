@@ -1,6 +1,6 @@
 # Step 4 — Run: the scheduler and the manager agent
 
-Status: 📐 **designed** (2026-10-05). **2026-10-06, your call: the manager is Claude Code** (the CLI or the desktop
+Status: **R1 ✅** (2026-10-06: `auto-app serve`, rounds, the batch, the edge cases — as built, §11); R2–R4 📐 designed. **2026-10-06, your call: the manager is Claude Code** (the CLI or the desktop
 app, on this project) with project skills; Claude Code handles memory and the conversation. **Slack is deferred**
 (§4's Slack parts, §6–§8). **Applying from Slack (§6, R4) is parked** while automated applying is off: *Apply* in Slack only queues the job (want to apply), and you apply by hand.
 
@@ -342,7 +342,7 @@ Library: `slack_bolt` (async, Socket Mode).
 
 | # | Deliverable |
 |---|---|
-| R1 | `auto-app serve`: the loop (collect → filter batch → pause, waiting for both), the round goal in the collector (caught up / time cap / volume caps, time spread across searches), the window, pause / resume / status (`data/serve.json`), the edge cases (usage → wait, unjudgeable jobs, a broken filter → notify and stop), round reports; launchd install, macOS notifications |
+| R1 ✅ | `auto-app serve`: the loop (collect → filter batch → pause, waiting for both), the round goal in the collector (caught up / time cap / volume caps, time spread across searches), the window, pause / resume / status (`data/serve.json`), the edge cases (usage → wait, unjudgeable jobs, a broken filter → notify and stop), round reports; launchd install, macOS notifications |
 | R2 | **The manager in Claude Code:** the missing commands of §5.3 (`--json`, `filter label`, `job mark --reason`, `job list --since / --posted-within / --search / --not-notified`, `job notified`, optional snooze), the project skills of §5.4 with the rules of §5.5, and `serve`'s "new recommendations — ask Claude Code" notification |
 | R3 | *(deferred)* Slack: the app manifest, `serve` waking a headless manager for the digest, the plain fallback, buttons |
 | R4 | *(parked)* Applying from Slack: Apply → the trial run, questions in threads, action needed, Ready cards, the Submit button and confirmation |
@@ -367,3 +367,39 @@ Library: `slack_bolt` (async, Socket Mode).
 Open: the defaults (`time_limit` 30 min, `interval` 30 min, 3 tries, 3 jobs in a row); the digest's `min_gap` (60 min)
 and quiet-day summary; per-source goals for company career sites; whether
 the manager may change filters (e.g. "stop recommending NYC jobs" → feedback, or a filter edit you confirm).
+
+## 11. As built: R1 (2026-10-06)
+
+- **Round goals in the collector** (`collect/goal.py`): `RoundGoal(time_limit_s, max_new_postings, max_pages)` gives
+  each source a `Budget`.
+  - Each search may use **the time left ÷ the searches left**, so what a quick search doesn't need flows on.
+  - Two new stop reasons, `time_limit` and `goal`. Each source's summary has `caught_up` (every search ended
+    `done` / `early_stop`, none skipped) and `goal_hit`.
+  - It works on browser and API sources. `auto-app run --time-limit / --max-new / --round-pages` use it too.
+  - No goal → unchanged behaviour.
+- **The filter batch for `serve`:**
+  - The runner setup moved out of the `filter run` command into `select/setup.py`.
+  - `run_select`'s report lists each failure, and which filters worked.
+  - **`select/health.py`** sorts failures into usage (with the reset time from the error, e.g. "resets 3pm", or the
+    retry interval), broken (a login / key / model / CLI error, or `broken_after` different jobs failing with none
+    working), or a job failure, counted in a new **`judge_tries`** table (migration `d49888c2fe1b`). After
+    `tries_per_job`, the job is **unjudgeable** for that filter: `filter run` skips it, and its decision ignores that
+    filter.
+  - `filter run --job N` clears it. `unparsed` answers still count as judged (as "recommend", for high recall), not as
+    failed tries.
+- **The loop** (`serve.py`, `Serve`):
+  - `blocked()` says why no round may start (stopped / paused / outside the window / pausing / batch pending).
+  - `run_round()` collects (per-source goals, `every`, `enabled`), sets `next_round_at` = the end of collecting + the
+    pause (± jitter), then runs the batch.
+  - The batch repeats after a usage reset, retries failed jobs within the batch (at most `tries_per_job` times), and
+    stops on a broken filter.
+  - `finish()` writes the report (`data/serve.json`, `data/logs/serve-rounds.jsonl`) and sends the notifications.
+  - A restart finishes a pending batch first.
+- **Commands:** `serve run [--once]` (a single instance via `data/serve.lock`; `caffeinate -i` while running),
+  `serve status`, `serve pause [--until]`, `serve resume` (after a broken filter: the backlog first),
+  `serve install / remove` (launchd `com.auto-app.serve`, KeepAlive).
+- **Settings:** `config/serve.yaml` (template `config/serve.example.yaml`, which equals the defaults).
+- **Tests:** `tests/collect/test_goal.py`, the goal on both collector kinds, `tests/select/test_health.py`, and
+  `tests/test_serve.py`. The serve tests use a fake clock: the pause from the end of collecting, a slow batch holding
+  the next round, the window and pause, usage → wait and judge again, a broken filter → stop until resume, unjudgeable
+  jobs, per-source cycles, `--once`, and the template.

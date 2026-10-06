@@ -92,3 +92,37 @@ async def test_rate_limited_company_goes_into_cooldown(tmp_path, store):
     batch = await runner.run(Selection(sources=["uipath"]))
     assert batch["sources"]["uipath"]["status"] == "blocked"
     assert store.source_health("uipath")["status"] == "cooldown"
+
+
+async def test_round_goal_caught_up_and_volume_cap(tmp_path, store):
+    from auto_app.collect.goal import RoundGoal
+
+    site = Site()
+    store, runner = make(tmp_path, site, store, goal=RoundGoal(time_limit_s=600))
+    batch = await runner.run(Selection(job_sites=False))
+    ui = batch["sources"]["uipath"]
+    assert ui["caught_up"] is True and ui["goal_hit"] is None  # every search saw everything new, within the time
+
+    store2, runner = make(tmp_path / "two", Site(), type(store)(*store_args(store, tmp_path / "two")),
+                          goal=RoundGoal(max_new_postings=0))
+    batch = await runner.run(Selection(job_sites=False))
+    for src in batch["sources"].values():
+        assert src["caught_up"] is False and src["goal_hit"] == "goal"  # a volume cap: not caught up
+
+
+def store_args(store, home):
+    from auto_app.collect.store import FileStore
+    from auto_app.core.db.store import DbStore
+
+    if isinstance(store, FileStore):
+        return (home / "raw",)
+    return (home / "data" / "auto_app.db", Paths(home=home))
+
+
+async def test_per_source_goals_are_stored_with_the_batch(tmp_path, store):
+    from auto_app.collect.goal import RoundGoal
+
+    store, runner = make(tmp_path, Site(), store, source_goals={"uipath": RoundGoal(time_limit_s=60)})
+    batch = await runner.run(Selection(job_sites=False))  # (before the fix: not JSON serializable)
+    assert batch["options"]["source_goals"] == {"uipath": {"time_limit_s": 60, "max_new_postings": None,
+                                                           "max_pages": None}}

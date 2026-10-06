@@ -6,7 +6,7 @@ import logging
 import time
 from collections import Counter
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
@@ -18,6 +18,7 @@ from auto_app.collect import apply_link
 from auto_app.collect.browser import BrowserSession, ResponseCapture
 from auto_app.collect.collector_base import CollectorBase
 from auto_app.collect.filters import reject_reason
+from auto_app.collect.goal import RoundGoal
 from auto_app.collect.guard import ChallengeDetected, HardBlock, HealthGuard, NeedsLogin, SoftFailure
 from auto_app.collect.pacer import Pacer
 from auto_app.collect.plan import Selection, build_tasks
@@ -52,7 +53,18 @@ class CollectOptions:
     force: bool = False  # ignore cooldowns
     manual_checks: bool = False  # hand security checks to the user for every source this run
     fast: bool = False  # no delays (tests)
+    goal: "RoundGoal | None" = None  # a round's goal (time cap, volume caps); None: as before (collect/goal.py)
+    source_goals: dict | None = None  # per source (`serve`'s config): {source: RoundGoal}, over `goal`
     context_hook: Callable[[BrowserContext], Awaitable[None]] | None = None
+
+
+def _jsonable(v):
+    """Options as stored with the batch: goals (dataclasses), also per source, as plain dicts."""
+    if is_dataclass(v):
+        return asdict(v)
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    return v
 
 
 def new_batch_id() -> str:
@@ -87,7 +99,7 @@ class CollectionRunner:
             "batch_id": batch_id,
             "started_at": utcnow(),
             "config_hash": hashlib.sha1(self.cfg.model_dump_json().encode()).hexdigest()[:12],
-            "options": {k: v for k, v in vars(self.opts).items() if k != "context_hook"},
+            "options": {k: _jsonable(v) for k, v in vars(self.opts).items() if k != "context_hook"},
             "sources": {},
         }
         self.store.write_batch(batch_id, batch)
@@ -174,12 +186,20 @@ class SourceCollector(CollectorBase):
                 await self._check_session()
                 if self.opts.retry and not self.opts.cards_only:
                     await self._retry_pass()
-                for search in self.searches:
-                    for query in self.adapter.build_queries(search):
-                        if reason := self.rate.day_exhausted():
-                            log.info("%s: %s; skipping remaining searches until a later run", self.name, reason)
+                queries = [(search, query) for search in self.searches for query in self.adapter.build_queries(search)]
+                for i, (search, query) in enumerate(queries):
+                    if reason := self.rate.day_exhausted():
+                        log.info("%s: %s; skipping remaining searches until a later run", self.name, reason)
+                        self.skipped_searches += len(queries) - i
+                        break
+                    if self.budget is not None:
+                        if (hit := self.budget.exhausted()) is not None:
+                            log.info("%s: round goal reached (%s); %d search(es) left for the next round",
+                                     self.name, hit, len(queries) - i)
+                            self.budget.skipped_searches += len(queries) - i
                             break
-                        await self._run_query(search, query)
+                        self.budget.start_query(len(queries) - i)  # its share of the time left
+                    await self._run_query(search, query)
                 self.mark_ok()
             except HardBlock as e:
                 await self._on_block(e)
@@ -319,11 +339,18 @@ class SourceCollector(CollectorBase):
                 if not new:
                     stop = StopReason.DONE
                     break
+                if self.budget is not None:
+                    self.budget.pages += 1
                 for card in new:
+                    if self.budget is not None and (over := self.budget.query_over()) is not None:
+                        stop = over  # the round's time / volume (or this search's share) — not caught up
+                        break
                     seen.add(card.source_job_id)
                     outcome, detail = await self._handle_card(card, search, run_id)
                     counts[outcome] += 1
                     self.stats[outcome] += 1
+                    if self.budget is not None and outcome == Outcome.FETCHED:
+                        self.budget.new_postings += 1
                     self.sighting(run_id, search.name, card, outcome, detail)
                     if outcome == Outcome.KNOWN and not card.is_promoted:
                         streak += 1
@@ -342,6 +369,9 @@ class SourceCollector(CollectorBase):
                     break
                 if page_index + 1 >= (self.opts.max_pages or search.max_pages):
                     stop = StopReason.MAX_PAGES
+                    break
+                if self.budget is not None and (over := self.budget.query_over()) is not None:
+                    stop = over
                     break
                 page_index += 1
                 if self.adapter.spec.pagination == "url":

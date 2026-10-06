@@ -1,0 +1,20 @@
+# auto-app serve (docs/step4-run.md) — copy to config/serve.yaml (git-ignored) to change anything; without it, these
+# defaults apply. Check with: auto-app serve status
+window:   { days: mon-sun, start: "08:00", end: "23:00" }   # rounds only in here (your local time); judging finishes anyway
+round:                       # a round collects until every search is caught up (it reached postings already collected),
+  time_limit: 30m            # or this cap per source (spread across its searches) — whichever comes first
+  # max_new_postings: 50     # optional volume caps per source
+  # max_pages: 40
+interval: 30m                # the pause, counted from the end of collecting; the next round also waits for the
+jitter: 0.2                  #   round's jobs to be judged · ± this share of the pause
+headless: true               # job-site browsers hidden
+sources: {}                  # per source, e.g.:
+#   linkedin:  { time_limit: 20m }
+#   uipath:    { every: 6h }   # company career sites change slowly
+#   indeed:    { enabled: false }
+filter:
+  # workers: 3               # judgments at once (default: AUTO_APP_SELECT__PARALLEL)
+  tries_per_job: 3           # a job failing this often for a filter → unjudgeable (retry: auto-app filter run --job N)
+  broken_after: 3            # this many different jobs failing, none working → the filter is broken: you're told,
+                             #   collecting stops until `auto-app serve resume`
+  usage_retry: 15m           # no usage left and no reset time given: try judging again after this

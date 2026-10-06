@@ -295,6 +295,16 @@ attempts = Table(  # every applier's try on an application, with its outcome (§
     Column("ended_at", Ts),
 )
 
+judge_tries = Table(  # Step 4: a filter's failed tries on a job; after N, the job is unjudgeable for it (§2.3)
+    "judge_tries", metadata,
+    Column("job_id", Integer, primary_key=True),
+    Column("filter", String, primary_key=True),
+    Column("tries", Integer, nullable=False, default=0),
+    Column("last_error", Text),
+    Column("unjudgeable_at", Ts),  # set: skipped by `filter run` until you retry it (`filter run --job N`)
+    Column("updated_at", Ts, nullable=False),
+)
+
 accounts = Table(  # Step 3: the site accounts the agent created or signed in to (docs/step3-agent.md §6)
     "accounts", metadata,
     Column("site", String, primary_key=True),  # the registrable site, e.g. myworkdayjobs.com's tenant host
