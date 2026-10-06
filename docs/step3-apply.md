@@ -14,7 +14,9 @@ want_to_apply ──► workers (several jobs at a time, paced by your apply pol
                                                          └──► submitted ──► job: applied
 ```
 
-Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A6 designed; **A7, the browser-agent applier — [step3-agent.md](step3-agent.md): A7.1 ✅ (2026-10-05: tools, guards, starting a job), A7.2–A7.4 next.** Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
+**Automated applying is off for now (2026-10-05, your call: "unplug the submit part — I need to think about it"):** the Apply section is a queue you apply from by hand (`AUTO_APP_APPLY__AUTOMATED=false`, the default); everything below is kept and comes back with `true`.
+
+Status: **A1 ✅ A2 ✅ A3 ✅**, automated Simplify ✅, starting a job = a headless dry run ✅ (2026-10-04: profile / answers / policy, the queue and chain runner, the Simplify hand-off and manual appliers; questions answered from profile / answers.yaml / Claude with the sensitive rule, the Needs input tab; the **Greenhouse** applier — questions from the API, the form filled and submitted in a browser, verified on a real form without submitting — with Ready to submit and Action needed — `src/auto_app/apply/`); A4–A6 designed; **A7, the browser-agent applier — [step3-agent.md](step3-agent.md): A7.1 ✅ A7.3 ✅ (2026-10-05: tools, guards, the trial run, accounts, fill only / submit), A7.2 / A7.4 next.** Replaces the earlier tailor-then-submit design; CV tailoring deferred (§11). Depends on Step 2's review (`want_to_apply`).
 
 ---
 

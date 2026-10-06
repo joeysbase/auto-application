@@ -172,6 +172,7 @@ def test_cli(apps, tmp_path, monkeypatch):
 
     db, _, jobs, _ = apps
     monkeypatch.setenv("AUTO_APP_HOME", str(tmp_path))
+    monkeypatch.setenv("AUTO_APP_APPLY__AUTOMATED", "true")  # (automated applying is off by default)
     monkeypatch.chdir(tmp_path)
     r = CliRunner().invoke(app, ["apply", "profile"])
     assert r.exit_code == 1 and "profile.yaml missing" in r.output
@@ -189,3 +190,12 @@ def test_cli(apps, tmp_path, monkeypatch):
     assert r.exit_code == 0 and "handoff" in r.output and "(simplify, 2 attempts)" in r.output  # simplify_auto (not built yet) skipped first
     r = CliRunner().invoke(app, ["apply", "inbox", *db_])
     assert r.exit_code == 2 and "full-screen" in r.output
+
+
+def test_apply_run_is_off_by_default(apps, tmp_path, monkeypatch):
+    from auto_app.cli import app
+
+    db = apps[0]
+    monkeypatch.setenv("AUTO_APP_HOME", str(tmp_path))
+    r = CliRunner().invoke(app, ["apply", "run", "--db", str(db.db_path)])
+    assert r.exit_code == 0 and "automated applying is off" in r.output and apps[1].rows() == []

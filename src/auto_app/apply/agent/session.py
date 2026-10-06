@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from auto_app.apply.agent.guards import allowed_navigation, allowed_sites, click_refusal
+from auto_app.apply.agent.guards import ACCOUNT_PAGE, HONEYPOT, allowed_navigation, allowed_sites, click_refusal
 from auto_app.apply.agent.snapshot import SNAPSHOT_JS, render
 from auto_app.apply.questions import Question, classify, norm, resolve, standard_id
 
@@ -47,7 +47,11 @@ class AgentSession:
     answers: dict = field(default_factory=dict)  # norm(label) -> the answer answer_for gave (sensitive check)
     result: Result = field(default_factory=Result)
     blocked: list = field(default_factory=list)  # navigations the guard stopped
+    account: dict = field(default_factory=dict)  # the site account used: {"site", "email", "created"}
     tokens: dict = field(default_factory=dict)
+    get_password: object = None  # (email, site) -> the Keychain password (accounts.get_password; tests: a fake)
+    has_password: object = None  # (email, site or None) -> bool: a password stored for that site / the default
+    find_account: object = None  # (site) -> the account on record, or None
 
     def __post_init__(self):
         assert self.mode in MODES
@@ -55,6 +59,15 @@ class AgentSession:
         self.known = {norm(q.label): q for q in self.app.get("questions") or []
                       if q.answer not in (None, "", []) and q.source not in ("skipped",)}
         self.job = {"title": self.app.get("title"), "company": self.app.get("company"), "description": ""}
+        from auto_app.apply import accounts
+
+        acc = self._accounts()
+        keychain_get = self.get_password or accounts.get_password
+        keychain_has = self.has_password or accounts.has_password
+        # profile.yaml first (accounts.passwords for a site, accounts.password for every site), then the Keychain
+        self.get_password = lambda email, site: acc.passwords.get(site or "") or acc.password or keychain_get(email, site)
+        self.has_password = lambda email, site: (bool(acc.passwords.get(site)) if site else bool(acc.password)) \
+            or keychain_has(email, site)
 
     # ---- plumbing ---------------------------------------------------------------------------------
 
@@ -156,6 +169,8 @@ class AgentSession:
     async def snapshot(self) -> str:
         if (t := self._time_up()):
             return t
+        if not self.items:
+            self._say("reading the page")
         frames, self.items = [], {}
         for i, frame in enumerate(self.page.frames):
             if frame.url in ("about:blank", "") and i:
@@ -183,11 +198,17 @@ class AgentSession:
         in_filled_form = await el.evaluate(
             "e => { const f = e.closest('form'); return !!f && [...f.querySelectorAll('input:not([type=hidden]), "
             "textarea, select')].filter(i => i.value).length >= 2; }")
-        why = click_refusal(self.mode, it.get("name") or "", it.get("role") or "", in_filled_form)
+        auth = await self._auth_form(el) or bool(ACCOUNT_PAGE.search(await self.page.title()))
+        why = click_refusal(self.mode, it.get("name") or "", it.get("role") or "", in_filled_form, auth=auth)
         if why:
             return why
         pages, before, blocked = len(self.page.context.pages), self.page.url, len(self.blocked)
-        await el.click(timeout=10_000)
+        how = ""
+        try:
+            await el.click(timeout=5_000)
+        except Exception:  # something covers it (an overlay, a cookie banner, a sticky header): click it directly
+            await el.evaluate("e => e.click()")
+            how = " (something covered it — clicked it directly)"
         await self.page.wait_for_timeout(1200)
         if len(self.blocked) > blocked:  # the guard stopped it: back to where we were
             if self.page.url != before:
@@ -198,11 +219,26 @@ class AgentSession:
             await self.page.wait_for_load_state("domcontentloaded")
             return "clicked — a new tab opened (now working in it); take a snapshot"
         self._say(f"clicked “{(it.get('name') or ref)[:50]}”")
-        return "clicked; take a snapshot to see the result"
+        return f"clicked{how}; take a snapshot to see the result"
+
+    async def _auth_form(self, el) -> bool:
+        """Is this element part of a sign-in / create-account form (a password field next to it)?"""
+        return await el.evaluate(
+            "e => { const f = e.closest('form, [role=dialog], main') || document;"
+            " const fields = [...f.querySelectorAll('input:not([type=hidden]):not([type=checkbox])')];"
+            " if (f.querySelector('input[type=password]')) return fields.length <= 5;"  # sign in / create account
+            # (an application form with a password among many fields isn't one) — or email first, password next:
+            " const mail = fields.some(i => i.type === 'email' || /mail|user/i.test(i.name + i.id + i.autocomplete));"
+            " return fields.length <= 2 && mail &&"
+            "   /sign.?in|log.?in|create (an )?account|sign.?up|register/i.test(document.title + ' ' + f.innerText.slice(0, 2000)); }")
 
     async def type(self, ref: str, text: str) -> str:
         if (t := self._time_up()):
             return t
+        if self._is_secret(ref) or (self.items.get(ref) or {}).get("value") == "••••":
+            return "refused: a password field — use fill_secret(ref, \"password\")"
+        if HONEYPOT.search((self.items.get(ref) or {}).get("name") or ""):
+            return "refused: a field for robots only (a honeypot) — leave it empty"
         if (why := self._guard_value(ref, text)):
             return why
         el = await self._el(ref)
@@ -236,9 +272,10 @@ class AgentSession:
             return t
         it = self.items.get(ref) or {}
         value = it.get("name") if it.get("group") and it.get("role") == "radio" else "yes"  # a radio: its option
-        if on and (why := self._guard_value(ref, value)):
-            return why
         el = await self._el(ref)
+        terms_ok = self._accounts().accept_terms and await self._auth_form(el)  # you allowed it, on account forms
+        if on and not terms_ok and (why := self._guard_value(ref, value)):
+            return why
         try:
             await (el.check if on else el.uncheck)(timeout=10_000)
         except Exception:
@@ -259,8 +296,61 @@ class AgentSession:
                 await el.click()
             await (await fc.value).set_files(str(self.me.cv))
         await self.page.wait_for_timeout(1500)
+        self._say("attaching your CV")
         self._record(ref, Path(self.me.cv).name, "profile")
         return "CV attached (the site may fill some fields from it: take a snapshot)"
+
+    def _accounts(self):
+        from auto_app.apply.profile import Accounts
+
+        p = self.me.profile
+        return getattr(p, "accounts", None) or Accounts()
+
+    async def account_info(self) -> str:
+        """For the site now open: sign in, or create an account — or what you still have to provide (§6)."""
+        from auto_app.apply.accounts import account_email, account_site, plan
+
+        email = account_email(self.me)
+        site = account_site(self.page.url)
+        known = self.find_account(site) if self.find_account else None
+        site_pw = bool(email) and self.has_password(email, site)
+        default_pw = bool(email) and self.has_password(email, None)
+        self._say(f"checking the account for {site}")
+        return plan(email, site, known, site_pw, default_pw)
+
+    async def fill_secret(self, ref: str, what: str) -> str:
+        """Type the account email or password you provided (§6) — the model never sees the password."""
+        from auto_app.apply.accounts import account_email, account_site, get_password
+
+        if (t := self._time_up()):
+            return t
+        email = account_email(self.me)
+        if not email:
+            return "no account email — done(\"action_needed\", \"set accounts.email in profile.yaml\")"
+        site = account_site(self.page.url)
+        el = await self._el(ref)
+        if what == "password":
+            if not await el.evaluate("e => e.type === 'password'"):
+                return "refused: not a password field"
+            secret = self.get_password(email, site)
+            if not secret:
+                return ("no password set for site accounts — done(\"action_needed\", \"set an account password: "
+                        "auto-app apply account set\")")
+            await el.fill(secret, timeout=10_000)
+            creating = await el.evaluate(  # a new password + its repeat, both on screen (hidden ones don't count:
+                "e => { const f = e.closest('form, [role=dialog], main') || document; "  # Workday hides sign-up's)
+                "return [...f.querySelectorAll('input[type=password]')]"
+                ".filter(i => i.offsetParent !== null && i.getClientRects().length).length >= 2; }")
+            self.account = {"site": site, "email": email,
+                            "created": bool(self.account.get("created")) or bool(creating)}
+            self._say("creating an account" if creating else "signing in")
+            return "password typed (not shown)"
+        if what == "email":
+            await el.fill(email, timeout=10_000)
+            self.account.setdefault("site", site)
+            self.account.setdefault("email", email)
+            return f"typed the account email ({email})"
+        return "what must be \"email\" or \"password\""
 
     async def press(self, key: str) -> str:
         await self.page.keyboard.press(key)
@@ -284,6 +374,7 @@ class AgentSession:
     async def answer_for(self, fields: list[dict]) -> str:
         """[{label, type?, options?, required?}] → an answer and its source for each, from earlier answers, profile,
         answers.yaml and Claude (drafts for free text) — or "ask the user"."""
+        self._say(f"looking up answers for {len(fields)} field(s)")
         qs, out = [], []
         for i, f in enumerate(fields):
             label = (f.get("label") or "").rstrip("* ").strip()

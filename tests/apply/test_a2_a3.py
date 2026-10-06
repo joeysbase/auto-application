@@ -384,3 +384,29 @@ def test_fill_only_that_stops_stays_ready(gh):
     got = a.submit(ml, fill_only=True)
     assert got.startswith("fill only stopped") and "step 2" in got
     assert a.get(ml)["status"] == "ready" and a.get(ml)["applier"] == applier.name  # not handed to Simplify
+
+
+async def test_manual_applying_from_the_queue(gh):
+    from auto_app.ui import AutoApp
+
+    db, a, jobs, filled, ctx = gh
+    opened, revealed = [], []
+    a.appliers["manual"].revealer = revealed.append
+    app = AutoApp(jobs=None, audit=None, inbox=a, cv="cv.pdf", start="inbox", dark=lambda: False,
+                  open_url=opened.append, automated=False)
+    async with app.run_test(size=(200, 50)) as pilot:
+        s = app.screen
+        assert s.tabs == ("queued",) and s.kind == "queued" and len(s.rows) == 2
+        keys = str(s.query_one("#keys").render())
+        assert "open the link + CV" in keys and "a applied" in keys and "submit" not in keys
+        assert not s.check_action("start", ()) and not s.check_action("submit", ())  # nothing automated
+        first = s.current()["job_id"]
+        await pilot.press("enter")
+        assert opened and revealed == ["cv.pdf"] and "apply, then press a" in str(s.query_one("#status").render())
+        await pilot.press("a")
+        assert db.job(first)["state"] == "applied" and len(s.rows) == 1
+        [rec] = [r for r in a.rows() if r["job_id"] == first]
+        assert rec["status"] == "submitted" and rec["applier"] == "manual"  # recorded: applied by hand
+        await pilot.press("d")
+        assert len(s.rows) == 0 and "Queued (0)" in str(s.query_one("#tabs").render())
+        await pilot.press("q")

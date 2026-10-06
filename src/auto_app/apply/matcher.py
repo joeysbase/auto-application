@@ -28,7 +28,7 @@ TIMEOUT_S = 180
 
 def build_prompt(questions, me, job: dict) -> str:
     bank = [{"key": k, "question": a.question, "answer": a.answer, "kind": a.kind} for k, a in me.answers.items()]
-    profile = me.profile.model_dump() if me.profile else {}
+    profile = me.profile.model_dump(exclude={"accounts"}) if me.profile else {}  # never the account password
     qs = [{"id": q.id, "label": q.label, "type": q.type, "required": q.required, "sensitive": q.kind == "sensitive",
            "free_text": q.kind == "free_text", "options": [o.get("label") for o in q.options] or None} for q in questions]
     return (

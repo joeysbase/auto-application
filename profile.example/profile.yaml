@@ -22,3 +22,10 @@ education:
 experience:
   - { company: Acme, title: ML Engineer Intern, start: 2025-05, end: 2025-08, location: "Boston, MA" }
 cv: profile/cv.pdf               # your CV, uploaded as is (put the PDF there)
+accounts:                        # sites that need an account (Workday …): the agent signs up with these, or signs in
+  email: alex@example.com        # one email for every site (default: email above)
+  password: "Change-me-1!"       # for signing up — 8+ characters, upper and lower case, a number, a symbol
+                                 # (profile/ is git-ignored and this is never sent to Claude; or leave it out and use
+                                 # the Keychain: `auto-app apply account set`)
+  passwords: {}                  # a site where you already have an account: { nvidia.wd5.myworkdayjobs.com: "…" }
+  accept_terms: false            # true: when creating an account, the agent may tick the site's terms / privacy box

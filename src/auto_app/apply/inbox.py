@@ -4,7 +4,7 @@ applying to the jobs you queued, a tab each (the key bar at the bottom shows the
   Queued            jobs you marked a (want to apply), not started  enter start this one · R start all · d not apply
   Needs input       questions only you can answer          enter answer · A answer for every job waiting with it ·
                                                            S answer + save to answers.yaml · n next applier · d drop
-  Action needed     a CAPTCHA / login during submission     s submit again (visible browser) · n next applier · d drop
+  Action needed     a CAPTCHA, a sign-in, a verification     r start over · s submit again (visible browser) · n next applier · d drop
   Ready to submit   filled; every answer and its source     s submit · f fill only (you submit) · e edit · a applied ·
                                                            n next applier · d drop
   Hand-offs         Simplify / manual                      o open · a applied · c couldn't · l later · r start over · d drop
@@ -34,7 +34,7 @@ TAB_STATUSES = {"needs_input": ("needs_input",), "action_needed": ("action_neede
                 "handoff": ("handoff",), "failed": ("failed",), "done": ("submitted", "dropped")}
 TAB_KEYS = {"queued": {"enter", "open", "drop"},
             "needs_input": {"enter", "answer", "open", "next_applier", "drop"},
-            "action_needed": {"submit", "open", "next_applier", "drop"},
+            "action_needed": {"submit", "fill_only", "retry", "open", "next_applier", "drop"},
             "ready": {"submit", "fill_only", "edit", "applied", "open", "next_applier", "drop"},
             "handoff": {"open", "applied", "couldnt", "later", "retry", "drop"}, "failed": {"retry", "manual", "drop"},
             "done": {"open"}}
@@ -42,11 +42,16 @@ TAB_KEYS = {"queued": {"enter", "open", "drop"},
 BAR = {"queued": [("enter", "start", "screen.enter"), ("R", "start all", "screen.start")],
        "needs_input": [("enter", "answer", "screen.enter"), ("A", "answer for all", "screen.answer('all')"),
                        ("S", "answer + save", "screen.answer('save')")],
-       "action_needed": [("s", "submit again", "screen.submit"), ("n", "next applier", "screen.next_applier")],
+       "action_needed": [("r", "start over", "screen.retry"), ("f", "fill only", "screen.fill_only"),
+                         ("s", "submit", "screen.submit")],
        "ready": [("s", "submit", "screen.submit"), ("f", "fill only", "screen.fill_only"), ("e", "edit", "screen.edit")],
        "handoff": [("o", "open", "screen.open"), ("a", "applied", "screen.applied"), ("r", "start over", "screen.retry")],
        "failed": [("r", "start over", "screen.retry"), ("m", "by hand", "screen.manual")],
        "done": [("o", "open", "screen.open")]}
+# automated applying off: Queued only, and you apply by hand
+MANUAL_BAR = [("enter", "open the link + CV", "screen.enter"), ("a", "applied", "screen.applied"),
+              ("d", "not applying", "screen.drop")]
+MANUAL_KEYS = {"enter", "open", "applied", "drop"}
 EMPTY = {"queued": "Nothing queued — mark jobs a (want to apply) in Jobs (F1).",
          "needs_input": "No questions waiting for you.", "action_needed": "Nothing needs a hand right now.",
          "ready": "Nothing ready to submit.", "handoff": "No hand-offs waiting. `auto-app apply run` starts queued jobs.",
@@ -119,9 +124,12 @@ class InboxScreen(Screen):
         "app.quit": "quit",
     }
 
-    def __init__(self, apps: Applications, cv=None, open_url=webbrowser.open):
+    def __init__(self, apps: Applications, cv=None, open_url=webbrowser.open, automated: bool = True):
         super().__init__()
         self.apps = apps
+        # automated applying off (AUTO_APP_APPLY__AUTOMATED=false, the default): only Queued — you apply by hand
+        self.automated = automated
+        self.tabs = TABS if automated else ("queued",)
         self.cv = cv
         self.open_url = open_url
         self.kind = "needs_input"
@@ -155,7 +163,7 @@ class InboxScreen(Screen):
         table = self.query_one(DataTable)
         table.add_columns("app", "job", "company", "title", "platform", "applier", "")
         counts = self.counts()  # open on the first tab with something
-        self.kind = next((k for k in TABS if counts[k]), "queued")
+        self.kind = next((k for k in self.tabs if counts[k]), "queued")
         self.reload()
         table.focus()
 
@@ -216,10 +224,10 @@ class InboxScreen(Screen):
     def _draw_tabs(self) -> None:
         counts = self.counts()
         parts = [(f"[reverse] {TAB_TITLES[k]} ({counts[k]}) [/]" if k == self.kind
-                  else f"[@click=screen.goto('{k}')] {TAB_TITLES[k]} ({counts[k]}) [/]") for k in TABS]  # clickable
+                  else f"[@click=screen.goto('{k}')] {TAB_TITLES[k]} ({counts[k]}) [/]") for k in self.tabs]  # clickable
         note = ("   [b]starting…[/b]" + (f" ({len(self.waiting)} more waiting)" if self.waiting else "")) if self.starting else ""
         self.query_one("#tabs", Static).update(" ".join(parts) + note)
-        self.query_one("#keys", Static).update(key_bar(BAR[self.kind]))
+        self.query_one("#keys", Static).update(key_bar(BAR[self.kind] if self.automated else MANUAL_BAR))
         self.show_detail()
         self.refresh_bindings()
         refresh = getattr(self.app, "refresh_sections", None)
@@ -239,6 +247,14 @@ class InboxScreen(Screen):
         box = self.query_one("#detail", Static)
         if r is None:
             box.update(EMPTY[self.kind])
+            return
+        if self.kind == "queued" and not self.automated:  # you apply by hand
+            box.update("\n".join([
+                f"[b]job #{r['job_id']}  {escape(r.get('title') or '')}[/b]", escape(r.get("company") or ""),
+                f"apply link: {escape(r.get('apply_url') or '—')}", "",
+                "[dim]Queued (want to apply). enter opens the apply link in your browser and your CV in Finder — "
+                "apply on the site, then a (applied) or d (not applying). Both show in Jobs (F1) → Applied / "
+                "Not applied.[/]"]))
             return
         if self.kind == "queued":
             box.update("\n".join([
@@ -304,17 +320,19 @@ class InboxScreen(Screen):
             return False
         if self.prompt_mode is not None:
             return action in ("cancel", "quit")  # typing an answer: keys go to the text box
+        if not self.automated:  # you apply by hand: open, applied, not applying
+            return action in MANUAL_KEYS or action in ("switch", "goto", "quit", "cancel")
         if action in ("switch", "goto", "quit", "cancel", "start"):
             return True
         return action in TAB_KEYS[self.kind]  # each tab's footer shows only its own keys
 
     def action_goto(self, kind: str) -> None:
         """A click on a tab."""
-        if kind in TABS and kind != self.kind:
-            self.action_switch(TABS.index(kind) - TABS.index(self.kind))
+        if kind in self.tabs and kind != self.kind:
+            self.action_switch(self.tabs.index(kind) - self.tabs.index(self.kind))
 
     def action_switch(self, step: int) -> None:
-        self.kind = TABS[(TABS.index(self.kind) + step) % len(TABS)]
+        self.kind = self.tabs[(self.tabs.index(self.kind) + step) % len(self.tabs)]
         self.rows = []
         self.query_one(DataTable).move_cursor(row=0)
         self.reload()
@@ -336,6 +354,15 @@ class InboxScreen(Screen):
         r = self.current()
         if r is None:
             return
+        if not self.automated:  # apply by hand: the link in your browser, your CV in Finder
+            if r.get("apply_url"):
+                self.open_url(r["apply_url"])
+            manual = self.apps.appliers.get("manual")
+            if self.cv and manual is not None:
+                manual.revealer(self.cv)
+            self.status(f"job #{r['job_id']}: opened the apply link" + (" and your CV" if self.cv else "")
+                        + " — apply, then press a (or d if you don't)")
+            return
         if self.kind == "handoff":
             self.status(self.apps.open(r["application_id"], self.cv))
         elif r.get("apply_url"):
@@ -343,6 +370,13 @@ class InboxScreen(Screen):
             self.status(f"opened {r['apply_url']}")
 
     def action_applied(self) -> None:
+        if not self.automated:
+            r = self.current()
+            if r:
+                self.apps.applied_by_hand(r["job_id"])
+                self.status(f"job #{r['job_id']}: applied → Jobs (F1) → Applied")
+                self.reload()
+            return
         self._do(self.apps.applied, "applied → moved to the Done tab (and Jobs, F1 → Applied)")
 
     def action_couldnt(self) -> None:
@@ -365,6 +399,9 @@ class InboxScreen(Screen):
         self._do(self.apps.drop, "dropped → moved to the Done tab (the job is marked not applied: Jobs, F1 → Not applied)")
 
     def action_enter(self) -> None:
+        if not self.automated:
+            self.action_open()
+            return
         if self.kind == "queued":
             r = self.current()
             if r:
@@ -394,6 +431,14 @@ class InboxScreen(Screen):
         wait = f" after job {self.now} has started (one browser at a time)" if self.starting and self.now else ""
         self.status(f"application {app_id}: {'filling it for you' if fill_only else 'submitting'} — a browser opens{wait}…")
         self.reload()
+
+        def step(text):  # what the agent is doing in that window
+            try:
+                self.app.call_from_thread(self.status, f"application {app_id}: {text}")
+            except Exception:
+                pass
+        if self.apps.ctx is not None:
+            self.apps.ctx.progress = step
 
         def work():
             try:
@@ -453,6 +498,14 @@ class InboxScreen(Screen):
 
         self.done_n = 0
 
+        def agent_step(text):  # what the agent is doing on the job being started
+            try:
+                self.app.call_from_thread(self._agent_step, text)
+            except Exception:
+                pass
+        if self.apps.ctx is not None:
+            self.apps.ctx.progress = agent_step
+
         def progress(job_id, status, done, total):
             try:
                 self.app.call_from_thread(self._progress, job_id, status)
@@ -501,11 +554,15 @@ class InboxScreen(Screen):
             self.status(f"job {job_id} → {tab} · {self.done_n} done, {left} to go")
         self.reload()
 
+    def _agent_step(self, text: str) -> None:
+        if self.now is not None:
+            self.status(f"job {self.now}: {text} · {self.done_n} done, {max(self.not_started() - 1, 0)} more after it")
+
     def _started(self, counts: dict) -> None:
         self.now = None
         self.status("started: " + (", ".join(f"{n} {k.replace('_', ' ')}" for k, n in sorted(counts.items())) or "nothing"))
         counts = self.counts()
-        first = next((k for k in TABS if k != "queued" and counts[k]), self.kind)  # where the started jobs landed
+        first = next((k for k in self.tabs if k != "queued" and counts[k]), self.kind)  # where the started jobs landed
         if first != self.kind:
             self.kind = first
             self.rows = []

@@ -225,6 +225,9 @@ class ApplyConfig(BaseModel):
     """Step 3 (docs/step3-apply.md §4): how application questions are matched and drafted, and the browser."""
 
     model_config = ConfigDict(extra="forbid")
+    # automated applying (the browser agent, Greenhouse, Simplify): off for now — the Apply section is a queue and you
+    # apply by hand; true brings back the trial runs, fill only and submit (docs/step3-apply.md, step3-agent.md)
+    automated: bool = False
     model: str = "claude-sonnet-5"  # Claude, through the Claude Code CLI (your login), for matching and drafting
     claude_cli: str = "claude"
     match_threshold: Annotated[float, Field(gt=0, le=1)] = 0.9  # below this, a matched answer goes to you
@@ -232,6 +235,7 @@ class ApplyConfig(BaseModel):
     simplify_consent: Literal["essentials", "accept"] = "essentials"  # Simplify's one-time "Before you autofill" notice
     # the browser-agent applier (docs/step3-agent.md): its model and its time limit per run (no token budget)
     agent_model: str = "claude-opus-5-5"
+    agent_headless: bool = True  # the trial run's browser hidden; false: watch it (and pass bot checks hidden ones fail)
     agent_time_limit_start_min: Annotated[float, Field(gt=0)] = 10  # starting a job (a dry run)
     agent_time_limit_submit_min: Annotated[float, Field(gt=0)] = 20  # fill only / submit
 

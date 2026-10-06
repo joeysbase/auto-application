@@ -12,6 +12,14 @@ from urllib.parse import urlparse
 NEXT = re.compile(r"^\s*(next|continue|next step|proceed|save (and|&) (continue|next)|continue to next step)\b", re.I)
 FINAL = re.compile(r"^\s*(submit( (my |your |the )?application)?|send( (my )?application)?|complete( (my )?application)?|"
                    r"finish( application)?|review and submit|submit and finish)\s*$", re.I)
+# signing in / creating an account (docs/step3-agent.md §6): allowed in every mode, with your email and password
+ACCOUNT = re.compile(r"\b(create (an |your )?account|sign ?(in|up)|log ?in|register|continue with email|"
+                     r"proceed to create)\b", re.I)
+ACCOUNT_PAGE = re.compile(r"\b(sign ?in|log ?in|create (an |your )?account|sign ?up|register|verify (your )?email)\b",
+                          re.I)
+# a honeypot: a field only bots fill (Workday: "Enter website. This input is for robots only, do not enter if you're human.")
+HONEYPOT = re.compile(r"for robots|only for (bots|robots)|do not (enter|fill)|leave (this )?(field )?(blank|empty)|honeypot",
+                      re.I)
 APPLY = re.compile(r"^\s*apply( now| for this (job|position|role))?\s*$", re.I)  # final only as a filled form's button
 
 # applicant-tracking systems and sign-in pages an application may move through (registrable domains)
@@ -42,14 +50,16 @@ def allowed_navigation(url: str, allowed: set[str]) -> bool:
     return site(u.hostname or "") in allowed
 
 
-def click_refusal(mode: str, name: str, role: str, in_filled_form: bool) -> str | None:
-    """Why this click isn't allowed in this mode, or None."""
+def click_refusal(mode: str, name: str, role: str, in_filled_form: bool, auth: bool = False) -> str | None:
+    """Why this click isn't allowed in this mode, or None. Only the application's final submit is refused — outside
+    submit mode (§4: starting a job goes through every step, saving each on the site, and stops before submitting).
+    auth: the button belongs to a sign-in / create-account form — its Submit / Continue signs you in, not the
+    application's submit (Workday labels its sign-in button "Submit")."""
     final = bool(FINAL.match(name or "")) or (bool(APPLY.match(name or "")) and in_filled_form and role == "button")
+    if final and auth:
+        final = False  # "Submit" on a sign-in / create-account form (Workday) signs you in — not the application
     if final and mode != "submit":
-        return ("refused: that submits the application — only when the user presses s. "
-                + ("Stop here and call done(\"filled\")." if mode == "fill" else
-                   "Starting a job never submits: call done when step 1 is filled."))
-    if mode == "start" and NEXT.match(name or ""):
-        return ("refused: Next sends this step to the site, which a dry run must not do. Fill this step, then call done "
-                "(more_steps=true); the next steps are filled when the user fills or submits.")
+        return ("refused: that submits the application — only when the user presses s. This is the last step: check "
+                "every field is filled, then call done(" + ("\"filled\"" if mode == "fill" else "\"ready\" (or \"needs_input\")")
+                + ").")
     return None

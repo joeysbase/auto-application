@@ -548,7 +548,8 @@ def _run_ui(cfg: AppConfig, store, fs, start: str, jobs=None, audit=None, jobs_t
     except typer.Exit:
         inbox, why["inbox"] = None, "The apply policy (config/apply.yaml) doesn't load — run `auto-app apply policy`."
     AutoApp(jobs=jobs or _browser(store, cfg, fs, None), audit=audit or _browser(store, cfg, fs, None), inbox=inbox,
-            cv=load_me(get_paths().home).cv, start=start, jobs_tab=jobs_tab, ui=cfg.ui, why=why).run()
+            cv=load_me(get_paths().home).cv, start=start, jobs_tab=jobs_tab, ui=cfg.ui, why=why,
+            automated=cfg.apply.automated).run()
 
 
 def _known_filters(store, fs, names: list[str] | None) -> None:
@@ -1331,8 +1332,14 @@ def _applications(cfg: AppConfig, store, opener=None):
         me=me, matcher=claude_matcher(cfg.apply.claude_cli, cfg.apply.model), threshold=cfg.apply.match_threshold,
         headless=cfg.apply.headless, browser_profile=paths.profile("apply"), answers_file=paths.me / "answers.yaml",
         browser_profiles=paths.profiles, simplify_consent=cfg.apply.simplify_consent, agent_model=cfg.apply.agent_model,
+        agent_headless=cfg.apply.agent_headless,
         agent_time_limit_start_s=cfg.apply.agent_time_limit_start_min * 60,
         agent_time_limit_submit_s=cfg.apply.agent_time_limit_submit_min * 60, logs=paths.logs)
+    if ctx is not None:
+        from auto_app.apply import accounts
+
+        ctx.record_account = lambda **kw: accounts.record(store, **kw)
+        ctx.find_account = lambda site: accounts.find(store, site)
     return Applications(store, policy, registry(opener), ttl=cfg.jobs.ttl_days, ctx=ctx)
 
 
@@ -1343,6 +1350,24 @@ def apply_profile():
 
     me = load_me(get_paths().home)
     typer.echo(format_me(me))
+    if me.profile is not None:  # sites that need an account: sign-up needs an email and a password
+        from auto_app.apply.accounts import EMAIL, account_email, has_password
+
+        from auto_app.apply.accounts import password_problems
+
+        email = account_email(me)
+        ok_email = bool(email and EMAIL.match(email))
+        acc = me.profile.accounts
+        if acc.password:
+            weak = password_problems(acc.password)
+            pw = ("in profile.yaml ✓" if not weak else
+                  "in profile.yaml ✗ — sign-up forms would refuse it: it needs " + ", ".join(weak))
+        elif ok_email and has_password(email, None):
+            pw = "in the Keychain ✓"
+        else:
+            pw = "not set ✗ — `accounts.password` in profile/profile.yaml (sites that need an account will wait)"
+        per_site = f" · own passwords for {len(acc.passwords)} site(s)" if acc.passwords else ""
+        typer.echo(f"site accounts: email {email or '—'} {'✓' if ok_email else '✗'} · password {pw}{per_site}")
     if me.problems:
         raise typer.Exit(1)
 
@@ -1418,6 +1443,66 @@ def apply_login(
     typer.echo(f"saved in {get_paths().profiles / 'simplify'}")
 
 
+account_app = typer.Typer(help="Site accounts for the browser agent: the email and password it signs in / up with.",
+                          no_args_is_help=True)
+apply_app.add_typer(account_app, name="account")
+
+
+@account_app.command("set")
+def account_set(
+    site: Annotated[str | None, typer.Option(help="Only for this site (its host, e.g. nvidia.wd5.myworkdayjobs.com); "
+                                                  "default: every site")] = None,
+):
+    """Save the password the agent signs in / creates accounts with — in the macOS Keychain, never in a file. The email
+    is `accounts.email` in profile.yaml (default: your email)."""
+    from auto_app.apply.accounts import account_email, set_password
+    from auto_app.apply.profile import load_me
+
+    from auto_app.apply.accounts import EMAIL, password_problems
+
+    email = account_email(load_me(get_paths().home))
+    if not email or not EMAIL.match(email):
+        typer.echo(f"no valid email ({email!r}): set `accounts.email` (or `email`) in profile/profile.yaml first", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"account email: {email}" + (f" · site: {site}" if site else " · every site (unless one has its own)"))
+    typer.echo("sites that need an account: the agent signs in where you have one (on record, or a password set with "
+               "--site), and otherwise signs up with this email and password")
+    while True:
+        password = typer.prompt("password", hide_input=True, confirmation_prompt=True)
+        problems = password_problems(password)
+        if not problems:
+            break
+        typer.echo("sign-up forms would refuse it — it needs " + ", ".join(problems) + "; try again", err=True)
+    try:
+        set_password(email, password, site)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    typer.echo("saved in the macOS Keychain (service auto-app) — the agent types it with fill_secret; Claude never sees it")
+
+
+@apply_app.command("accounts")
+def apply_accounts(config: ConfigOpt = None, out: OutOpt = None):
+    """The site accounts the agent created or signed in to, and whether a password is set."""
+    from auto_app.apply.accounts import account_email, get_password, rows
+    from auto_app.apply.profile import load_me
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`apply accounts`")
+    email = account_email(load_me(get_paths().home))
+    typer.echo(f"account email: {email or '— (set email in profile/profile.yaml)'} · default password: "
+               + ("set" if email and get_password(email) else "not set — `auto-app apply account set`"))
+    found = rows(store)
+    if not found:
+        typer.echo("no accounts yet")
+        return
+    for r in found:
+        how = "created by the agent" if r["created_by_agent"] else "signed in"
+        typer.echo(f"  {r['site']:<44} {r['email']:<28} {how:<20} last used {str(r['last_used_at'])[:10]}"
+                   + (f" · {r['note']}" if r["note"] else ""))
+
+
 @apply_app.command("queue")
 def apply_queue(config: ConfigOpt = None, out: OutOpt = None):
     """The jobs you queued (want to apply), in the policy's order, with each one's platform, applier chain and status."""
@@ -1442,11 +1527,15 @@ def apply_run(
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
-    """Start applications for the queued jobs: each goes through its applier chain — the form is filled headless and read
-    back (nothing submitted): questions left → Needs input, all answered → Ready to submit, else a hand-off."""
+    """Start applications for the queued jobs (automated applying only — off by default: AUTO_APP_APPLY__AUTOMATED)."""
     from auto_app.apply.profile import load_me
 
     cfg = _config_or_env(config)
+    if not cfg.apply.automated:
+        typer.echo("automated applying is off — apply by hand from the Apply section (`auto-app ui`, F3 → Queued: "
+                   "enter opens the link and your CV, a marks it applied). To turn it back on: "
+                   "AUTO_APP_APPLY__AUTOMATED=true")
+        return
     store = _store(out, cfg)
     _require_db(store, "`apply run`")
     me = load_me(get_paths().home)
@@ -1511,7 +1600,7 @@ _ORDER = {
     filter_app: ["list", "show", "run", "why", "audit", "eval", "reparse"],
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],
-    apply_app: ["profile", "policy", "login", "queue", "run", "inbox", "list"],
+    apply_app: ["profile", "policy", "login", "accounts", "queue", "run", "inbox", "list"],
 }
 for _group, _names in _ORDER.items():
     _group.registered_commands.sort(key=lambda c: _names.index(c.name))

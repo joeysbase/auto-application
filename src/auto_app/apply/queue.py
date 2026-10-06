@@ -184,6 +184,18 @@ class Applications:
         self._attempt(application_id, applier.name, "handoff", Outcome("handoff", "opened"))
         return msg
 
+    def applied_by_hand(self, job_id: int) -> int:
+        """You applied yourself (manual applying): the application is recorded (manual) and the job marked applied."""
+        app = next((j["application"] for j in self.queue() if j["job_id"] == job_id and j["application"]), None)
+        if app is None:
+            [new] = self.enqueue([job_id]) or [None]
+            app = self.get(new) if new else None
+        if app is None:
+            raise ValueError(f"job {job_id} isn't queued")
+        self._set(app["application_id"], applier="manual", chain=["manual"], chain_pos=0)
+        self.applied(app["application_id"])
+        return app["application_id"]
+
     def applied(self, application_id: int) -> None:
         app = self.get(application_id)
         self._set(application_id, status="submitted", submitted_at=utcnow())

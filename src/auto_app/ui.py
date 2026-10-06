@@ -88,7 +88,8 @@ class AutoApp(App):
     ]
 
     def __init__(self, jobs=None, audit=None, inbox=None, cv=None, start: str = "jobs", jobs_tab: str = "recommended",
-                 ui: UiConfig | None = None, dark=system_dark, open_url=webbrowser.open, why: dict | None = None):
+                 ui: UiConfig | None = None, dark=system_dark, open_url=webbrowser.open, why: dict | None = None,
+                 automated: bool = True):
         """jobs / audit: JobBrowser (separate ones — narrowing Jobs mustn't narrow the audit); inbox: Applications.
         A section given None shows `why[section]` instead."""
         super().__init__()
@@ -102,6 +103,7 @@ class AutoApp(App):
         self.open_url = open_url
         self.why = why or {}
         self.section = start
+        self.automated = automated  # automated applying on (else Apply is a queue you apply from by hand)
 
     def _screen(self, name: str) -> Screen:
         src = self.sources[name]
@@ -110,7 +112,7 @@ class AutoApp(App):
         if name == "inbox":
             from auto_app.apply.inbox import InboxScreen
 
-            return InboxScreen(src, cv=self.cv, open_url=self.open_url)
+            return InboxScreen(src, cv=self.cv, open_url=self.open_url, automated=self.automated)
         from auto_app.process.job_browser import JobsScreen
 
         if name == "audit":
@@ -148,7 +150,8 @@ class AutoApp(App):
             out["audit"] = f"{left} left" if left else ""
         inbox = self.sources["inbox"]
         if inbox is not None:
-            n = {k: len(inbox.rows((k,))) for k in ("needs_input", "action_needed", "ready", "handoff", "failed")}
+            n = ({k: len(inbox.rows((k,))) for k in ("needs_input", "action_needed", "ready", "handoff", "failed")}
+                 if self.automated else {k: 0 for k in ("needs_input", "action_needed", "ready", "handoff", "failed")})
             from auto_app.apply.inbox import _not_started
 
             n["queued"] = sum(1 for j in inbox.queue() if _not_started(j))  # the same count as the Queued tab

@@ -29,6 +29,15 @@ class Name(BaseModel):
     preferred: str | None = None
 
 
+class Accounts(BaseModel):
+    """Site accounts the browser agent signs up / in with (docs/step3-agent.md §6). The password: here (profile/ is
+    git-ignored; never sent to Claude) or in the Keychain (`auto-app apply account set`)."""
+    email: str | None = None  # one email for every site (default: your email above)
+    password: str | None = None  # for every site — signing up where you have no account
+    passwords: dict[str, str] = Field(default_factory=dict)  # per site (its host): sign in there with this one
+    accept_terms: bool = False  # may the agent tick a site's terms / privacy box when creating an account?
+
+
 class Profile(BaseModel):
     model_config = ConfigDict(extra="allow")  # education, experience, location, … are free-form for now
     name: Name
@@ -36,6 +45,7 @@ class Profile(BaseModel):
     phone: str | None = None
     links: dict[str, str] = Field(default_factory=dict)
     cv: str = "profile/cv.pdf"
+    accounts: Accounts = Field(default_factory=Accounts)  # site accounts for the browser agent
 
 
 class Answer(BaseModel):

@@ -1,7 +1,7 @@
 # Step 3 — the browser-agent applier (`agent`, milestone A7)
 
-Status: **A7.1 ✅** (2026-10-05: tools, guards, start mode — `src/auto_app/apply/agent/`; as built, §14); A7.2–A7.4
-📐 designed. Part of [Step 3 — Apply](step3-apply.md); it replaces the "generic (later)" row
+Status: **A7.1 ✅ A7.3 ✅** (2026-10-05: tools, guards, start mode — `src/auto_app/apply/agent/`; as built, §14); **accounts ✅**
+(pulled forward from A7.3, §15) and live progress; A7.2–A7.4 📐 designed. Part of [Step 3 — Apply](step3-apply.md); it replaces the "generic (later)" row
 of §3 there and moves it up the chain.
 
 **Goal:** apply through any application form, however it's built, without per-site rules. A Claude agent looks at the
@@ -78,7 +78,7 @@ The same three passes as today (§5 of step3-apply.md):
 
 | mode | browser | steps | final submit | ends with |
 |---|---|---|---|---|
-| **start** (`enter` / `R`, `apply run`) | hidden | **step 1 only**: Next is blocked, because Next sends the step to the site (Adobe: `POST applySubmit`) | blocked | needs_input / ready / action_needed |
+| **start** (`enter` / `R` / `r`, `apply run`) — a **trial run** (2026-10-05, your call: "check the agent can actually fill the form, so that when I say submit it submits without issue") | hidden (`AUTO_APP_APPLY__AGENT_HEADLESS=false`: visible) | **every step**: signs in / creates the account if asked, Next / Continue allowed. Each step is saved on the site as a draft, as when you fill it by hand | **blocked**, stops on the last step | ready (it can be submitted) / needs_input (which step) / action_needed |
 | **fill only** (`f`) | visible | every step, Next allowed | **stops** there for you | filled |
 | **submit** (`s`) | visible | every step | clicked; our existing check waits for the confirmation page | submitted / action_needed / failed |
 
@@ -102,18 +102,25 @@ The prompt states the rules; the tools enforce them, so a confused or misled age
 
 ## 6. Accounts (Workday-style sites)
 
-**The agent creates accounts when a site requires one**, with **the information you provide**:
+**The agent creates accounts when a site requires one**, with **the information you provide**, in every mode,
+including the trial run when you start a job (so the trial covers the whole application).
 
 - **Email:** one for every company's account, set in `profile.yaml` (`accounts.email`, defaulting to your email).
-- **Password:** yours, set once with `auto-app apply account set` and kept in the **macOS Keychain**, never in files
-  (the 2026-10-04 decision in step3-apply.md §13). Optionally one per site.
+- **Password:** yours, in `profile/profile.yaml`: `accounts.password` for every site, `accounts.passwords: {host: …}`
+  for a site where you already have an account (2026-10-05, your choice; `profile/` is git-ignored, and the matcher's
+  prompt leaves `accounts:` out, so it never reaches Claude). Or in the **macOS Keychain**, with `auto-app apply
+  account set [--site HOST]`. `profile.yaml` wins.
 - **The agent never sees the password:** it calls `fill_secret(ref, "password")` / `fill_secret(ref, "email")`, and the
   tool types the value. Snapshots show password fields as `••••`.
 - **Recorded:** each account the agent creates or signs in to (site, email, date) is saved with the application, and
   shown in its detail and in `apply accounts`.
 - **Email verification / SMS codes:** the agent has no mailbox, so it ends with **action_needed** ("verify your email
   for workday.example.com, then `s` / `r`"). After you verify, the next run signs in with the same account.
-- **Sign-in:** an existing account is used (`fill_secret`) before ever creating a second one.
+- **Sign in or sign up (2026-10-05, your rule):**
+  - The agent **signs in only with account info for that site**: an account on record, or a password you set for it (`--site`).
+  - **Otherwise it signs up** with your email and password. If the email is already registered, it signs in with the same pair; a wrong password → action_needed.
+  - The new tool `account_info()` tells it which, for the site now open. It needs **at least a valid email and a valid password**: missing either → it doesn't try, and the job is action_needed ("set …").
+  - `apply account set` refuses a password a sign-up would reject (8+ characters, upper and lower case, a number, a symbol).
 
 ## 7. Time limit (no token budget)
 
@@ -164,7 +171,7 @@ The prompt states the rules; the tools enforce them, so a confused or misled age
 |---|---|
 | A7.1 ✅ | Tools (§3), guards (§5), start mode; the agent loop on the Agent SDK with Opus 5.5 on your Claude Code login (verified); offline tests with a scripted model |
 | A7.2 | Real start-mode runs on the test set; logs, progress, attempt summaries; fixes from what it hits |
-| A7.3 | Fill only / submit through every step; later-step questions back to Needs input; accounts (§6: `apply account set`, Keychain, `fill_secret`, action_needed for verification) |
+| A7.3 ✅ (2026-10-05) | Fill only / submit through every step; later-step questions back to Needs input; accounts (§6: `apply account set`, Keychain, `fill_secret`, action_needed for verification) |
 | A7.4 | The comparison (§10); you decide the chains; README / docs updated with the results |
 
 ## 12. Risks
@@ -189,7 +196,9 @@ The prompt states the rules; the tools enforce them, so a confused or misled age
 4. **No token budget; a time limit per run.**
 5. **The agent creates and signs in to accounts with the email and password you provide** (Keychain; typed by
    `fill_secret`, never seen by the model). Email / SMS verification is yours (action_needed).
-6. **Start mode never clicks Next or submit**; fill only and submit go through every step; only `s` submits.
+6. **Starting a job is a trial run of the whole application:** sign in / create the account, every step (each saved on
+   the site as a draft), stop before the final submit. Only `s` submits. (Briefly, the same day, a send-nothing dry run
+   limited to step 1; you chose the trial run.)
 
 ## 14. As built (A7.1, 2026-10-05)
 
@@ -225,3 +234,52 @@ The prompt states the rules; the tools enforce them, so a confused or misled age
 - the time limit;
 - start mode end to end through the queue: needs_input, the last check catching a missed required field;
 - the SDK tool handlers: errors returned to the model, screenshots, logs.
+
+## 15. As built: accounts, live progress, clicks (2026-10-05)
+
+Pulled forward from A7.3, because every Workday job stopped at "Sign In" (NVIDIA, 2026-10-05).
+
+**Accounts (§6):**
+- **The email:** `profile.yaml` → `accounts.email` (default: `email`).
+- **The password:**
+  - `auto-app apply account set [--site HOST]` saves it in the macOS Keychain via `security` (service `auto-app`, account `default:<email>` or `<host>:<email>`).
+  - A site's own password wins over the default.
+  - `apply accounts` lists the accounts.
+- **`fill_secret(ref, "email" | "password")`:**
+  - The tool types the value; the model only sees "password typed (not shown)".
+  - It refuses a non-password field for the password.
+  - `type` refuses password fields, so the model can't type a password itself.
+  - With no password set, it answers "set an account password: auto-app apply account set" and the agent ends with action_needed.
+- **In every mode, the trial run included:** sign-in and create-account clicks and `fill_secret` are allowed. A sign-in form's own Submit / Continue / Sign In isn't the application's submit (Workday labels its sign-in button "Submit"; a sign-in form = a password field among at most 5 fields, or an email-only first step on a page titled sign in / create account). Only the application's final submit is refused outside submit mode.
+  - The terms / privacy box on such a form may be ticked only with `accounts.accept_terms: true`; otherwise it's a sensitive field (your saved answer or you).
+- **Honeypots:** a field "for robots only" ("do not enter if you're human", as on Workday) is refused by `type`.
+- **Recording:** each account used goes into the `accounts` table (migration `4bc3cd20fcd6`):
+  - keyed by the **full host**, since Workday accounts are per company;
+  - created by the agent (two password fields on the form) or signed in;
+  - the application, and "verification pending" when the run ended action_needed.
+  
+  The job's note says "created an account on …" / "signed in to …".
+- **The prompt:** sign in first, create an account only if there's none, never type or reset a password, and verification or codes → action_needed.
+
+**Live progress:** the session reports what it's doing ("reading the page", "looking up answers for 6 field(s)", "clicked “Apply”", "filling “Email”", "attaching your CV", "signing in" / "creating an account", "asking you “…”"). The Apply section shows it on the status line as "job N: … · k done, m more after it".
+
+**Clicks:** a click blocked by something on top (an overlay, a cookie banner, a sticky header) is retried as a direct click on the element, and the tool says so. On NVIDIA, the agent had lost 40 s to three timeouts and a keyboard workaround.
+
+**Tests:** in `tests/apply/test_agent.py`:
+- sign in with the email and password unseen, and the password guards;
+- creating an account, with the terms box with and without `accept_terms`;
+- no password → action_needed;
+- clicking through an overlay, and progress;
+- the Keychain calls (faked) and the account records.
+
+## 16. As built: fill only and submit (A7.3, 2026-10-05)
+
+- **Visible browser:** `f` and `s` run the same walk as the trial run (the same profile, so a sign-in from the trial is reused), with your answers known, in a **visible** browser.
+- **`f`:** the agent stops on the last step (`done("filled")`), and the window stays open until you close it. The job stays Ready: "if you submitted it, press a".
+- **`s`:** the final submit is allowed. A submit counts only with a confirmation on the page ("thank you for applying" / "application received" / a confirmation URL) → submitted, and the job becomes applied.
+  - Agent says submitted but no confirmation → **action_needed** ("check whether it went through, then a or s"), never `failed`, because the next applier could apply a second time.
+  - A CAPTCHA after submitting → action_needed.
+- **A new or re-asked question on the way** → needs_input. Questions asked in this run replace earlier ones with the same label, and your other answers are kept.
+- **The Apply section:** `f` and `s` work on **Action needed** too (e.g. NVIDIA after a sign-in step). The agent's progress shows on the status line ("application 13: signing in").
+
+Tests (scripted model, a fake two-step form): the trial run → ready; `s` → submitted with the confirmation; `f` → filled, waits for the window to close; no confirmation → action_needed; a question asked again on submit → needs_input.

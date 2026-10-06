@@ -81,6 +81,8 @@ SNAPSHOT_JS = r"""(prefix) => {
     '[role=menuitem], [role=textbox], [contenteditable=true]';
   const CONTEXT = 'h1, h2, h3, h4, legend, [role=alert], [role=heading], [aria-current=step], [aria-live=assertive], ' +
     '[class*=error]:not(input):not(select):not(textarea), [class*=step]:not(:has(input, select, textarea, button))';
+  // refs from an earlier snapshot must not linger (a stale e4 would point at an old element)
+  for (const old of document.querySelectorAll('[data-aa-ref]')) old.removeAttribute('data-aa-ref');
   const out = []; let n = 0; const seen = new Set();
   for (const el of document.querySelectorAll(INTERACTIVE + ', ' + CONTEXT)) {
     if (!visible(el)) continue;

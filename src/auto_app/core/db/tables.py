@@ -295,6 +295,17 @@ attempts = Table(  # every applier's try on an application, with its outcome (§
     Column("ended_at", Ts),
 )
 
+accounts = Table(  # Step 3: the site accounts the agent created or signed in to (docs/step3-agent.md §6)
+    "accounts", metadata,
+    Column("site", String, primary_key=True),  # the registrable site, e.g. myworkdayjobs.com's tenant host
+    Column("email", Text, nullable=False),
+    Column("created_by_agent", Boolean, nullable=False, default=False),  # created by the agent (else: signed in to)
+    Column("created_at", Ts, nullable=False),
+    Column("last_used_at", Ts, nullable=False),
+    Column("application_id", Integer),  # the application it was first used for
+    Column("note", Text),  # e.g. "email verification pending"
+)
+
 questions = Table(  # Step 3: each application's questions, with what was filled in and why (§4, §8)
     "questions", metadata,
     Column("application_id", Integer, ForeignKey("applications.application_id"), primary_key=True),

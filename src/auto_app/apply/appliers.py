@@ -124,9 +124,15 @@ class ApplyContext:
     simplify_consent: str = "essentials"  # Simplify's one-time consent notice: essentials | accept
     dry_run: bool = True  # starting a job fills the real form headless and reads it back
     agent_model: str = "claude-opus-5-5"  # the browser-agent applier (docs/step3-agent.md)
+    agent_headless: bool = True
     agent_time_limit_start_s: float = 600
     agent_time_limit_submit_s: float = 1200
     logs: Path | None = None  # data/logs/ (the agent writes a log per run under agent/)
+    progress: object = None  # progress(text): what the agent is doing now (the Apply section's status line)
+    record_account: object = None  # record_account(site, email, created, application_id, note): accounts.record
+    get_password: object = None  # (email, site) -> the Keychain password; default accounts.get_password
+    has_password: object = None  # (email, site | None) -> bool; default accounts.has_password
+    find_account: object = None  # (site) -> the account on record (accounts.find), or None
 
 
 def registry(opener=None, manual_opener=None, revealer=None, http=None, filler=None, dry_runner=None,
