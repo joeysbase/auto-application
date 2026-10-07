@@ -337,6 +337,53 @@ def ui(
     _run_ui(cfg, store, load_filters(directory or FILTERS_DIR), "jobs")
 
 
+@app.command("web")
+def web(
+    port: Annotated[int, typer.Option(help="Port on 127.0.0.1")] = 8765,
+    open_: Annotated[bool, typer.Option("--open", help="Open it in your browser")] = False,
+    build_: Annotated[bool, typer.Option("--build", help="Rebuild the web app first (needs Node)")] = False,
+    dev: Annotated[bool, typer.Option("--dev", help="Also run the web app's dev server (hot reload, port 5173)")] = False,
+    directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
+    config: ConfigOpt = None,
+    out: OutOpt = None,
+):
+    """The web app (this Mac only, http://127.0.0.1:8765): browse jobs and their verdicts in your browser.
+    Built from web/ on first run (needs Node); the TUI (`auto-app ui`) works as before."""
+    import uvicorn
+
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+    from auto_app.web import build as wb
+    from auto_app.web.app import create_app
+
+    cfg = _config_or_env(config)
+    store = _store(out, cfg)
+    _require_db(store, "`web`")
+    try:
+        if build_ or (not dev and not wb.built()):
+            wb.build(typer.echo)
+        devp = wb.dev_server(port) if dev else None
+    except wb.BuildError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    if dev:
+        hosts |= {f"127.0.0.1:{wb.DEV_PORT}", f"localhost:{wb.DEV_PORT}"}
+    app_ = create_app(_browser(store, cfg, load_filters(directory or FILTERS_DIR), None), wb.DIST, port=port,
+                      db_name=Path(store.db_path).name, allowed_hosts=hosts)
+    url = f"http://127.0.0.1:{wb.DEV_PORT if dev else port}"
+    typer.echo(f"auto-app web: {url}  (database {store.db_path}; Ctrl-C to stop)")
+    if open_:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.5, webbrowser.open, [url]).start()
+    try:
+        uvicorn.run(app_, host="127.0.0.1", port=port, log_level="warning")
+    finally:
+        if devp:
+            devp.terminate()
+
+
 @schedule_app.command("install")
 def schedule_install(
     at: Annotated[list[str], typer.Option("--at", help="Time of day HH:MM (repeatable)")] = ["09:00"],

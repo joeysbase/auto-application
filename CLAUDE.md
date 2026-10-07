@@ -55,7 +55,8 @@ The quickest start: `uv run auto-app serve status --json`, then `uv run auto-app
 ## Developing the app
 
 - Python 3.12, `uv`; Typer CLI (`src/auto_app/cli.py`); SQLite + SQLAlchemy + Alembic (`migrations/`); Playwright;
-  Textual TUI (`auto-app ui`). Tests: `uv run pytest -q`.
+  Textual TUI (`auto-app ui`); the web app (`auto-app web`: FastAPI in `src/auto_app/web/`, React / Vite / TS in
+  `web/`, `npm run build` there; docs/web-frontend.md). Tests: `uv run pytest -q`.
 - **Design docs:** `docs/step1-collect.md` … `docs/step4-run.md`, plus a dated entry per change in `docs/updates/`
   (and its index). Every feature updates its `docs/updates/` entry and index, the matching step doc, and `README.md`
   (checked against `--help`).

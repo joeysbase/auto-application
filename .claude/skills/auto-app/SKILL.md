@@ -58,9 +58,15 @@ collect (job sites + company career sites) → jobs (deduplicated) → filters j
 - **Unjudgeable:** a job a filter failed on 3 times is set aside for that filter:
   `uv run auto-app filter unjudgeable --json`. Retry one with `filter run --job N`.
 
-**The user's own screens:** `auto-app ui` (or `job browse`, `filter audit`, `apply inbox`) is a full-screen terminal
-app (Jobs · Audit · Apply) **the user** runs: fast for browsing, deciding and labelling many jobs with single keys.
-You can't operate it. Suggest it when the user wants to go through lots of jobs, or to audit a filter.
+**The user's own screens** (they run them; you can't operate them):
+- `auto-app ui` (or `job browse`, `filter audit`, `apply inbox`): a full-screen terminal app (Jobs · Audit · Apply),
+  fast for deciding and labelling many jobs with single keys, and for auditing a filter;
+- `auto-app web --open`: the same jobs in the browser at http://127.0.0.1:8765 (this Mac only). For now it's for
+  browsing and reading: tabs, search, a filter's verdict, every verdict's reason, the description. Deciding and
+  labelling there come later.
+
+Suggest one of them when the user wants to go through lots of jobs. To show the user a job in the web app, give the
+link `http://127.0.0.1:8765/?tab=all&job=<id>`; it works only while `auto-app web` runs.
 
 **Reading data:** always add `--json`. If the user says to test, or use the scratch / test database, add
 `--db data/try.db` to every `auto-app` command for the whole session.

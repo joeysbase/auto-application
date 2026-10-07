@@ -16,6 +16,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
   - [`source`](#source--step-1-setup-where-jobs-come-from) — `list`, `show`, `add`, `login`, `health`, `plan`
   - [`collect`](#collect--step-1a-run-the-searches) — `run`, `probe`, `stats`
   - [`process`](#process--step-1b-postings--jobs) — `parse`, `normalize`, `dedup`
+  - [`web`](#web--the-app-in-your-browser) — the app in your browser (Jobs; Apply, Audit, Status to come)
   - [`ui`](#ui--every-interactive-part-in-one-app) — Jobs (F1), Audit (F2), Apply (F3)
 - [The manager: Claude Code](#the-manager-claude-code) — talk to the app; project skills
   - [`run`, `serve` and `schedule`](#run-and-schedule--all-of-step-1-automatically)
@@ -203,6 +204,7 @@ auto-app schedule                install · show · remove auto-app filter   lis
 auto-app source                  list · show · add · login · health · plan
 auto-app collect                 run · probe · stats    auto-app data     inspect · export · import · purge
 auto-app process                 parse · normalize · dedup
+auto-app ui                      the TUI                auto-app web      the app in your browser
 ```
 
 ### Global options
@@ -379,6 +381,31 @@ uv run auto-app process dedup
 ```
 
 ---
+
+### `web` — the app in your browser
+
+```bash
+uv run auto-app web --open                  # http://127.0.0.1:8765 — built from web/ on first run (needs Node)
+uv run auto-app web --db data/try.db        # on the test database
+```
+A web app next to the TUI ([docs/web-frontend.md](docs/web-frontend.md)), on **this Mac only** (127.0.0.1; requests from other hosts or sites are refused). It reads the same database as `serve`, the TUI and Claude Code, and refreshes every 30 s.
+
+- **Jobs:**
+  - the TUI's tabs with counts (All, Not evaluated, New recommended, All recommended, Un-recommended, Applied, Not applied, Archived);
+  - narrowing: search, source, company, one filter's verdict (recommended it / didn't / couldn't be read), date posted;
+  - a table with the job's sources, state, expiry, ⚠ repost warnings and your 👍 / 👎 labels;
+  - a detail pane: the job's facts and link, every filter's verdict with its reason and lookups and your label, the postings, the description.
+- **Keys:** `↑`/`↓` or `j`/`k` move · `[` / `]` previous / next tab · `/` search · `o` open the job's link · `esc` leaves the search box.
+- **The URL keeps the view** (tab, narrowing, the open job), so reloads and bookmarks come back to it.
+- **Coming next:** deciding and labelling (W2), Apply and Status (W3), Audit (W4). Until then use `auto-app ui` or Claude Code for those.
+
+| Option | |
+|---|---|
+| `--port N` | default 8765 |
+| `--open` | open it in your browser |
+| `--build` | rebuild the web app first (after changing `web/`); it's built automatically when `web/dist` is missing |
+| `--dev` | also run Vite's dev server (hot reload) on port 5173, proxying `/api` to this server; open http://127.0.0.1:5173 |
+| `--db PATH` | another database |
 
 ### `ui` — every interactive part in one app
 
