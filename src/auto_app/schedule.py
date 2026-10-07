@@ -12,6 +12,17 @@ LABEL = "com.auto-app.run"
 AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 
+SYSTEM_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+
+
+def service_path(tools: tuple[str, ...] = ("uv", "claude")) -> str:
+    """PATH for a launchd job, which doesn't get your shell's: where `tools` live now (e.g. `claude` in
+    ~/.local/bin, so filters can run), ~/.local/bin, then the system folders."""
+    dirs = [str(Path(found).parent) for t in tools if (found := shutil.which(t))]
+    dirs += [str(Path.home() / ".local" / "bin"), *SYSTEM_PATH]
+    return ":".join(dict.fromkeys(dirs))
+
+
 def plist_path() -> Path:
     return AGENTS / f"{LABEL}.plist"
 
@@ -40,7 +51,7 @@ def build_plist(times: list[str], *, headless: bool, uv: str | None = None, proj
         "StartCalendarInterval": parse_times(times),
         "StandardOutPath": str(log),
         "StandardErrorPath": str(log),
-        "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
+        "EnvironmentVariables": {"PATH": service_path()},
         "ProcessType": "Background",
     }
 

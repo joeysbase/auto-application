@@ -444,9 +444,9 @@ A round with new recommendations sends a notification ("ask Claude Code"). Each 
 | command | |
 |---|---|
 | `serve run` | the loop in the foreground (`--once`: one round now, or why not). `Ctrl-C` / SIGTERM stops it within 15 s (what's collected is saved). Holds `data/serve.lock`; a manual `auto-app run` during collecting waits for the next round |
-| `serve install` · `serve remove` | keep it running in the background (launchd KeepAlive: starts at log-in, restarts after a crash; `--dry-run` shows the plist); log `data/logs/serve.log` |
+| `serve install` · `serve remove` | keep it running in the background (launchd KeepAlive: starts at log-in, restarts after a crash; `--dry-run` shows the plist); its `PATH` includes where `uv` and `claude` are (and `~/.local/bin`); log `data/logs/serve.log` |
 | `serve status` | running / paused / stopped, the next round, the last round's report |
-| `serve pause [--until 2h \| 09:00 \| 2026-10-07 09:00]` · `serve resume` | no new rounds (judging goes on); resume after a pause, or after fixing a broken filter |
+| `serve pause [--until 2h \| 09:00 \| 2026-10-07 09:00]` · `serve resume` | no new rounds (judging goes on); resume after a pause, or after fixing a broken filter (a running `serve` judges the backlog at once, then rounds go on) |
 
 ```bash
 uv run auto-app serve run --once

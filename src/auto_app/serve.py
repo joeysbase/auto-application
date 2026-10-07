@@ -364,6 +364,12 @@ class Serve:
 
     # ---- forever ------------------------------------------------------------------------------------
 
+    def backlog_due(self) -> bool:
+        """A batch left unjudged (`serve resume` after a stop, or a restart mid-batch), not paused or stopped."""
+        st = self.state.read()
+        paused = st.get("paused") or (st.get("paused_until") and _dt(st["paused_until"]) > self.clock())
+        return bool(st.get("filter_pending")) and not st.get("stopped") and not paused
+
     def step(self, all_sources: list[str]) -> Round | None:
         """One tick: a round if one may start now, else None."""
         if self.blocked(self.clock()) is not None:
@@ -374,10 +380,10 @@ class Serve:
 
     def run_forever(self, all_sources: list[str], once: bool = False) -> None:
         self.state.update(pid=os.getpid(), started=_iso(self.clock()), status="idle")
-        if self.state.read().get("filter_pending"):  # stopped mid-batch last time: finish judging first
-            r = Round(started=self.clock())
-            self.filter_batch(r)
         while True:
+            if self.backlog_due():  # at start-up, or `serve resume` while this loop waits: judge it first
+                self.state.update(status="filtering")
+                self.filter_batch(Round(started=self.clock()))
             if once and (why := self.blocked(self.clock())) is not None:
                 self.state.update(status=why)
                 raise NotNow(why)  # `serve run --once`: no round may start now
@@ -442,6 +448,7 @@ LABEL = "com.auto-app.serve"
 def build_plist(uv: str | None = None, project: Path | None = None) -> dict:
     import shutil
 
+    from auto_app.schedule import service_path
     from auto_app.settings import PROJECT_ROOT
 
     project = project or PROJECT_ROOT
@@ -456,7 +463,7 @@ def build_plist(uv: str | None = None, project: Path | None = None) -> dict:
         "ThrottleInterval": 60,
         "StandardOutPath": str(out),
         "StandardErrorPath": str(out),
-        "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
+        "EnvironmentVariables": {"PATH": service_path()},
         "ProcessType": "Background",
     }
 

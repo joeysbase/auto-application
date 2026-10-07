@@ -31,6 +31,8 @@ notifications are macOS banners only.
 - **Started by launchd with KeepAlive** (`auto-app serve install`): it restarts after a crash, a reboot or a log-out /
   log-in. `serve status / pause / resume / stop` control it locally, and so does the manager in Slack. It replaces
   `auto-app schedule`'s fixed times (that command stays for one-off daily runs).
+  The service's `PATH` is the folders where `uv` and `claude` were found at install time, `~/.local/bin`, then the
+  system folders (launchd doesn't pass your shell's), so filters can run `claude`.
 - **Simple by design (2026-10-06, your call: "isn't it just collect and filter?"):** the loop above, one step at a time,
   reusing the two existing commands (`auto-app run`, `filter run`). No per-job event pipeline, queue tables, control
   socket or extra concurrency.
@@ -128,7 +130,8 @@ A round ends at **the first goal reached**:
 - **Job vs filter:** a job is marked unjudgeable only if its filter is working on other jobs meanwhile. If several
   different jobs fail in a row, the filter is broken, and those jobs stay in the backlog to be judged once it's fixed.
 - **After "broken", collecting resumes only when you say so** (`serve resume`, or "resume" in Slack). The filter
-  first catches up on the backlog; then the next round starts.
+  first catches up on the backlog; then the next round starts. The loop checks for a pending backlog at every tick,
+  so `resume` takes effect in a `serve` that's already running (no restart needed).
 - **Notifications** go to macOS for now, and to Slack once the manager exists (R2), each once rather than repeatedly.
 
 ### 2.4 The round report

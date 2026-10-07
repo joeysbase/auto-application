@@ -172,6 +172,49 @@ def test_once_says_why_no_round_starts_now(make):
     assert s.calls["collect"] == 0
 
 
+def test_resume_while_the_loop_waits_judges_the_backlog(make):
+    class Collected(BaseException):  # not an Exception: a round catches those and the loop goes on
+        pass
+
+    def collect(sources, goals):
+        raise Collected  # the round after the backlog: far enough for this test
+    s = make(collect=collect)
+    s.state.update(stopped="filter ml is broken: Invalid API key")
+    sleep = s.sleep
+
+    def resume_on_first_tick(sec):
+        sleep(sec)
+        if s.state.read().get("stopped"):
+            s.state.update(stopped=None, filter_pending=True)  # what `serve resume` writes
+    s.sleep = resume_on_first_tick
+    with pytest.raises(Collected):
+        s.run_forever(["linkedin"])
+    assert s.calls["judge"] == 1 and s.calls["collect"] == 1  # the backlog was judged, then the next round began
+    assert not s.state.read().get("filter_pending")
+
+
+def test_a_paused_backlog_waits(make):
+    from auto_app.serve import NotNow
+
+    s = make()
+    s.state.update(filter_pending=True, paused=True)
+    with pytest.raises(NotNow, match="paused"):
+        s.run_forever(["linkedin"], once=True)
+    assert s.calls["judge"] == 0
+
+
+def test_the_service_finds_uv_and_claude(monkeypatch):
+    from auto_app import schedule, serve
+
+    found = {"uv": "/opt/homebrew/bin/uv", "claude": "/Users/me/.local/bin/claude"}
+    monkeypatch.setattr(schedule.shutil, "which", found.get)
+    monkeypatch.setattr(schedule.Path, "home", lambda: schedule.Path("/Users/me"))
+    path = serve.build_plist(uv="/opt/homebrew/bin/uv")["EnvironmentVariables"]["PATH"].split(":")
+    assert path[:2] == ["/opt/homebrew/bin", "/Users/me/.local/bin"] and "/usr/bin" in path
+    assert len(path) == len(set(path))
+    assert schedule.build_plist(["09:00"], headless=True)["EnvironmentVariables"]["PATH"] == ":".join(path)
+
+
 def test_the_template_is_the_defaults():
     from auto_app.serve import load_serve_config
     from auto_app.settings import PROJECT_ROOT
