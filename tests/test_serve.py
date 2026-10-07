@@ -36,7 +36,7 @@ def report(judged=3, recommended=1, failures=(), succeeded=None):
 
 @pytest.fixture
 def make(tmp_path):
-    def make(judge=None, collect=None, cfg=None, store=None):
+    def make(judge=None, collect=None, cfg=None, store=None, retention=None):
         clock = Clock()
         told = []
         calls = {"collect": 0, "judge": 0}
@@ -52,7 +52,7 @@ def make(tmp_path):
             return (judge or (lambda n: report()))(calls["judge"])
         s = Serve(cfg or ServeConfig(jitter=0), State(tmp_path / "serve.json"), do_collect, do_judge,
                   lambda title, text: told.append(text), store=store, rounds_log=tmp_path / "rounds.jsonl",
-                  clock=clock, sleep=clock.sleep, tick_s=60, rand=lambda: 0.5)
+                  clock=clock, sleep=clock.sleep, tick_s=60, rand=lambda: 0.5, retention=retention)
         s.told, s.calls, s.clock_ = told, calls, clock
         return s
     return make
@@ -68,7 +68,7 @@ def test_a_round_then_the_pause_from_the_end_of_collecting(make, tmp_path):
     assert s.blocked(s.clock_()) is None
     st = s.state.read()
     assert st["last_round"]["sources"]["linkedin"] == {"new": 3, "pages": 4, "caught_up": True, "goal_hit": None,
-                                                       "status": "ok"}
+                                                       "status": "ok", "stopped_by": None}
     assert "1 new recommendation(s) — ask Claude Code" in s.told[0]
     assert (tmp_path / "rounds.jsonl").read_text().count("\n") == 1
     text = format_round(st["last_round"])
@@ -177,3 +177,26 @@ def test_the_template_is_the_defaults():
     from auto_app.settings import PROJECT_ROOT
 
     assert load_serve_config(PROJECT_ROOT / "config" / "serve.example.yaml") == ServeConfig()
+
+
+def test_the_report_names_what_stopped_a_source():
+    r = {"started": "2026-10-06T14:26:00", "collect_ended": "2026-10-06T14:34:00",
+         "sources": {"linkedin": {"new": 21, "pages": 24, "caught_up": False, "goal_hit": None, "status": "ok",
+                                  "stopped_by": "max_pages"}}}
+    assert "linkedin: not caught up (max_pages), 21 new / 24 pages" in format_round(r)  # its own page limit, not "ok"
+
+
+def test_retention_runs_once_a_day(make):
+    ran = []
+    s = make(retention=lambda: ran.append(1) or "3 postings' raw data dropped")
+    r = s.step(["linkedin"])
+    assert ran == [1] and r.retention == "3 postings' raw data dropped"
+    assert "retention: 3 postings' raw data dropped" in format_round(s.state.read()["last_round"])
+    s.clock_.t = r.next_round_at
+    assert s.step(["linkedin"]).retention is None and ran == [1]  # 40 min later: not again
+    s.clock_.t += timedelta(hours=24)
+    s.step(["linkedin"])
+    assert ran == [1, 1]
+    off = make(cfg=ServeConfig(jitter=0, retention=None), retention=lambda: ran.append(1))
+    off.step(["linkedin"])
+    assert ran == [1, 1]  # retention: null = never

@@ -2,6 +2,7 @@
 The default store; `--debug-files` uses the FileStore instead (files only, no database)."""
 
 import json
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,7 +13,7 @@ from sqlalchemy import and_, func, insert, or_, select, update
 
 from auto_app.collect.store import PostingRef, RawPurged, api_capture, api_card, dumps, safe_name, select_retry
 from auto_app.core.db import tables as T
-from auto_app.core.db.job_ttl import original_id
+from auto_app.core.db.job_ttl import expire_jobs, original_id
 from auto_app.core.db.engine import make_engine, upgrade
 from auto_app.core.models import Card, Outcome, RawCapture, RawPosting, utcnow
 from auto_app.settings import Paths
@@ -388,6 +389,12 @@ class DbStore:
             if new:
                 conn.execute(insert(T.job_locations), new)
 
+    def set_notified(self, job_ids: list[int], when=None) -> int:
+        """The manager told you about these jobs (docs/step4-run.md §4); returns how many were marked."""
+        when = when or utcnow()
+        with self.engine.begin() as conn:
+            return conn.execute(update(T.jobs).where(T.jobs.c.job_id.in_(job_ids)).values(notified_at=when)).rowcount
+
     def jobs(self, archived: bool | None = False) -> list[dict]:
         """Jobs with their primary posting's title/company/date, locations and sources.
         archived: False = active jobs (default), True = archived records only, None = both."""
@@ -599,9 +606,10 @@ class DbStore:
         self.set_job_state(job_id, step2=... if keep_step2 else step2, decision=decision)
         return j.get("step2"), j.get("decision")
 
-    def refresh_job_dates(self, ttl, now: datetime | None = None) -> int:
+    def refresh_job_dates(self, ttl, now: datetime | None = None, expire: bool = True) -> int:
         """Active jobs: last_seen_at = the latest last-seen of any of their postings; expires_at = that + the
-        TTL of their state. Returns how many jobs changed."""
+        TTL of their state. Then (expire) the jobs past it are archived or deleted (job_ttl.py) — expiry is part of
+        the job model, whoever writes. Returns how many jobs' dates changed."""
         j, p = T.jobs, T.postings
         changed = 0
         with self._conn() as conn:
@@ -617,6 +625,11 @@ class DbStore:
                 if (seen, expires) != (last, exp):
                     conn.execute(update(j).where(j.c.job_id == job_id).values(last_seen_at=seen, expires_at=expires))
                     changed += 1
+        if expire:
+            rep = expire_jobs(self, ttl, now=now)
+            if rep.deleted or rep.archived:
+                logging.getLogger(__name__).info("expired: %d archived, %d deleted", len(rep.archived),
+                                                 len(rep.deleted))
         return changed
 
     def add_repost_warnings(self, job_id: int, keys: set[tuple[str, str]]) -> list[dict]:

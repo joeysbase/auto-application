@@ -231,3 +231,21 @@ def test_job_show_prints_the_description(db, tmp_path, monkeypatch):
     purge(db, AppConfig().retention, ttl=TTL)  # archived: the primary posting's parsed fields are kept
     r = CliRunner().invoke(app, ["job", "show", str(j), "-d"])
     assert "from the primary posting" in r.output and "Build ML systems" in r.output
+
+
+def test_jobs_expire_on_any_refresh_without_a_purge(db):
+    """Expiry is part of the job model: a refresh of the dates (after collecting, judging, a decision) expires jobs."""
+    for jr, title in (("JR7", "ML Engineer"), ("JR8", "Sales Lead"), ("JR9", "Data Analyst")):
+        add(db, "nvidia", jr, url=wd(jr), title=title, desc=OTHER)
+    run(db)
+    never, rec, queued = (job_of(db, f"nvidia/{r}") for r in ("JR7", "JR8", "JR9"))
+    db.set_job_state(rec, step2="recommended")
+    db.set_job_state(queued, step2="recommended", decision="want_to_apply")
+    for r in ("JR7", "JR8", "JR9"):
+        seen_days_ago(db, f"nvidia/{r}", 40)  # past every TTL
+    db.refresh_job_dates(TTL, expire=False)
+    assert db.job(rec)["state"] == "recommended"  # (dates only)
+    db.refresh_job_dates(TTL)
+    assert db.job(never) is None  # never judged: deleted
+    assert db.job(rec)["state"] == "archived"  # judged: archived, kept as a record
+    assert db.job(queued)["state"] == "want_to_apply"  # queued: never expires

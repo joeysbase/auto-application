@@ -1,4 +1,5 @@
-"""Job TTL (C11, docs/step1-collect.md §9.1–9.2), applied by `auto-app data purge`.
+"""Job TTL (C11, docs/step1-collect.md §9.1–9.2). Applied whenever job dates are refreshed (after collecting, judging,
+a decision — `DbStore.refresh_job_dates`), whoever runs it; `auto-app data purge` applies it too, with a report.
 
 A job expires `jobs.ttl_days[state]` days after any of its postings was last seen:
 - **judged by Step 2** (any filter ran on it), recommended, or decided → **archived** — it's training data
@@ -62,10 +63,17 @@ def _state(step2: str | None, decision: str | None) -> str:
 
 
 def apply_job_ttl(store, ttl: JobTTL, *, now: datetime | None = None, dry_run: bool = False) -> TTLReport:
+    """Refresh the job dates, then expire (`data purge`)."""
+    now = now or utcnow()
+    if not dry_run:
+        store.refresh_job_dates(ttl, now, expire=False)
+    return expire_jobs(store, ttl, now=now, dry_run=dry_run)
+
+
+def expire_jobs(store, ttl: JobTTL, *, now: datetime | None = None, dry_run: bool = False) -> TTLReport:
+    """Archive or delete every active job past its TTL (the dates as they are)."""
     now = now or utcnow()
     rep = TTLReport(dry_run)
-    if not dry_run:
-        store.refresh_job_dates(ttl, now)
     j, p = T.jobs, T.postings
     cutoff = now.replace(tzinfo=None) if now.tzinfo else now  # SQLite stores naive UTC
     with store.engine.begin() as conn:

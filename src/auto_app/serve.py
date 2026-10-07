@@ -97,11 +97,13 @@ class ServeConfig(BaseModel):
     sources: dict[str, SourceCfg] = Field(default_factory=dict)
     filter: FilterCfg = FilterCfg()
     headless: bool = True  # job-site browsers hidden
+    retention: str | None = "24h"  # how often to drop old raw pages, sightings and logs (None: never)
 
-    @field_validator("interval")
+    @field_validator("interval", "retention")
     @classmethod
     def _duration(cls, v):
-        parse_duration(v)
+        if v is not None:
+            parse_duration(v)
         return v
 
 
@@ -171,20 +173,22 @@ class Round:
     unjudgeable: int = 0
     filtered_at: datetime | None = None
     next_round_at: datetime | None = None
+    retention: str | None = None  # what the daily retention dropped, if it ran this round
     problems: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return {"started": _iso(self.started), "collect_ended": _iso(self.collect_ended), "sources": self.sources,
                 "new_jobs": self.new_jobs, "judged": self.judged, "recommended": self.recommended,
                 "unjudgeable": self.unjudgeable, "filtered_at": _iso(self.filtered_at),
-                "next_round_at": _iso(self.next_round_at), "problems": self.problems}
+                "next_round_at": _iso(self.next_round_at), "retention": self.retention, "problems": self.problems}
 
 
 def format_round(r: dict) -> str:
     def hm(s):
         return s[11:16] if s else "?"
     src = " · ".join(
-        f"{n}: " + ("caught up" if v.get("caught_up") else f"not caught up ({v.get('goal_hit') or v.get('status')})")
+        f"{n}: " + ("caught up" if v.get("caught_up") else
+                    f"not caught up ({v.get('stopped_by') or v.get('goal_hit') or v.get('status')})")
         + f", {v.get('new', 0)} new / {v.get('pages', 0)} pages"
         for n, v in (r.get("sources") or {}).items()) or "nothing collected"
     out = f"round {hm(r.get('started'))}–{hm(r.get('collect_ended'))} · {src}"
@@ -192,6 +196,8 @@ def format_round(r: dict) -> str:
     out += f", {r['unjudgeable']} unjudgeable)" if r.get("unjudgeable") else ")"
     if r.get("next_round_at"):
         out += f" · next round ≈ {hm(r['next_round_at'])}"
+    if r.get("retention"):
+        out += f"\n      retention: {r['retention']}"
     for p in r.get("problems") or []:
         out += f"\n      ! {p}"
     return out
@@ -199,12 +205,15 @@ def format_round(r: dict) -> str:
 
 class Serve:
     """The loop. collect(sources, goals) -> (batch summary, new jobs); judge() -> SelectReport (or raises
-    BrokenFilters); notify(title, text); clock() / sleep(s) — all injectable for tests."""
+    BrokenFilters); notify(title, text); retention() -> a one-line summary (dropping old raw data, sightings, logs;
+    every `cfg.retention`); clock() / sleep(s) — all injectable for tests. Expired jobs need nothing here: they're
+    archived or deleted whenever job dates are refreshed (collecting and judging do that)."""
 
     def __init__(self, cfg: ServeConfig, state: State, collect: Callable, judge: Callable, notify: Callable,
                  store=None, rounds_log: Path | None = None, clock=datetime.now, sleep=time.sleep,
-                 tick_s: float = 30, rand=random.random):
+                 tick_s: float = 30, rand=random.random, retention: Callable | None = None):
         self.cfg, self.state, self.collect, self.judge, self.notify = cfg, state, collect, judge, notify
+        self.retention = retention
         self.store, self.rounds_log, self.clock, self.sleep, self.tick_s, self.rand = (
             store, rounds_log, clock, sleep, tick_s, rand)
 
@@ -262,8 +271,10 @@ class Serve:
         rounds = self.state.read().get("source_rounds", {})
         for name, s in (batch.get("sources") or {}).items():
             o = s.get("outcomes") or {}
+            stopped = next((k for k in s.get("stop_reasons") or {} if k not in ("done", "early_stop")), None)
             r.sources[name] = {"new": o.get("fetched", 0), "pages": s.get("pages_loaded", 0),
-                               "caught_up": s.get("caught_up"), "goal_hit": s.get("goal_hit"), "status": s.get("status")}
+                               "caught_up": s.get("caught_up"), "goal_hit": s.get("goal_hit"), "status": s.get("status"),
+                               "stopped_by": s.get("goal_hit") or stopped}  # e.g. a search's own max_pages
             rounds[name] = _iso(r.started)
             if s.get("status") in ("needs_login", "blocked"):
                 r.problems.append(f"{name}: {s.get('status')} — {s.get('error') or ''}"[:300])
@@ -312,6 +323,21 @@ class Serve:
             break
         r.filtered_at = self.clock()
         self.state.update(filter_pending=None, usage_until=None)
+        self.retain(r)
+
+    def retain(self, r: Round) -> None:
+        """The daily retention, after a round's batch (every `cfg.retention`)."""
+        if self.retention is None or self.cfg.retention is None:
+            return
+        last, now = _dt(self.state.read().get("retention_at")), self.clock()
+        if last and now - last < timedelta(seconds=parse_duration(self.cfg.retention)):
+            return
+        try:
+            r.retention = self.retention()
+        except Exception as e:  # not worth stopping for: try again next round
+            r.problems.append(f"retention failed: {type(e).__name__}: {e}"[:300])
+            return
+        self.state.update(retention_at=_iso(now))
 
     def _stop(self, r: Round, why: str) -> None:
         r.problems.append(why)
@@ -400,6 +426,9 @@ def describe(cfg: ServeConfig, st: dict) -> str:
     lines.append(f"schedule     rounds until caught up (cap {cfg.round.time_limit or 'none'}), "
                  f"then {format_duration(parse_duration(cfg.interval))} ± {int(cfg.jitter * 100)}% · "
                  f"window {w.days} {w.start}–{w.end}")
+    lines.append("cleanup      expired jobs: archived / deleted as their date passes · old raw data, sightings, logs: "
+                 + (f"every {cfg.retention}" + (f" (last {st['retention_at'][:16].replace('T', ' ')})"
+                                                if st.get("retention_at") else "") if cfg.retention else "never"))
     if st.get("last_round"):
         lines += ["", format_round(st["last_round"])]
     return "\n".join(lines)

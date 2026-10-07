@@ -8,6 +8,9 @@ round:                       # a round collects until every search is caught up 
 interval: 30m                # the pause, counted from the end of collecting; the next round also waits for the
 jitter: 0.2                  #   round's jobs to be judged · ± this share of the pause
 headless: true               # job-site browsers hidden
+retention: 24h               # how often to drop old raw pages, sightings and logs (the days: AUTO_APP_RETENTION__…
+                             #   in .env); null = never. Expired jobs don't wait for this: they're archived (or,
+                             #   never judged, deleted) as soon as their date passes and the next round runs
 sources: {}                  # per source, e.g.:
 #   linkedin:  { time_limit: 20m }
 #   uipath:    { every: 6h }   # company career sites change slowly

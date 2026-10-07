@@ -161,6 +161,7 @@ jobs = Table(
     Column("archive_description", LargeBinary),  # zstd; applied jobs only (judged jobs also keep their primary posting's parsed fields)
     Column("duplicate_of", Integer),  # archived only: the earlier archived job this one duplicates (step2 §7.8)
     Column("warnings", JSON),  # e.g. [{"kind": "repost", "job_id": 12, "text": "looks like job #12, …"}]
+    Column("notified_at", Ts),  # Step 4: when you were told about it (the manager's digest — `job notified`)
 )
 
 job_locations = Table(

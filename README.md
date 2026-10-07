@@ -17,6 +17,7 @@ A personal pipeline that finds job postings, picks the ones worth applying to, a
   - [`collect`](#collect--step-1a-run-the-searches) — `run`, `probe`, `stats`
   - [`process`](#process--step-1b-postings--jobs) — `parse`, `normalize`, `dedup`
   - [`ui`](#ui--every-interactive-part-in-one-app) — Jobs (F1), Audit (F2), Apply (F3)
+- [The manager: Claude Code](#the-manager-claude-code) — talk to the app; project skills
   - [`run`, `serve` and `schedule`](#run-and-schedule--all-of-step-1-automatically)
   - [`job`](#job--the-job-pool) — `list`, `show`, `browse`, `mark`
   - [`filter`](#filter--step-2-judge-jobs-with-your-filters) — `list`, `show`, `run`, `why`, `audit`, `eval`, `reparse`
@@ -433,10 +434,12 @@ One long-running loop (design: [`docs/step4-run.md`](docs/step4-run.md)): **coll
 
 **When filtering can't keep up:**
 - **No usage left** (Claude Code, API or DeepSeek limits): judging waits until the reset the error names (otherwise it retries every 15 min), and so does collecting. You get one notice, and it resumes by itself.
-- **A job failing 3 times** for a filter that otherwise works becomes **unjudgeable** and stops blocking. `filter run --job N` gives it a fresh start.
+- **A job failing 3 times** for a filter that otherwise works becomes **unjudgeable** and stops blocking (`filter unjudgeable` lists them). `filter run --job N` gives it a fresh start.
 - **A broken filter** (a config that won't load, a login or API key rejected, an unknown model, or 3 different jobs failing with none working): **you're notified at once and collecting stops** until you fix it and run `serve resume`, which judges the backlog first.
 
-A round with new recommendations sends a notification ("ask Claude Code"). Each round's report goes into `serve status` and `data/logs/serve-rounds.jsonl`, for example `round 09:00–09:10 · linkedin: caught up, 37 new / 6 pages · 41 judged (5 recommended) · next round ≈ 09:40`. State lives in `data/serve.json`; the settings in `config/serve.yaml` (template `config/serve.example.yaml`: window, round cap, pause, jitter, per-source `time_limit` / `every` / `enabled: false`, filter tries).
+A round with new recommendations sends a notification ("ask Claude Code"). Each round's report goes into `serve status` and `data/logs/serve-rounds.jsonl`, for example `round 09:00–09:10 · linkedin: caught up, 37 new / 6 pages · 41 judged (5 recommended) · next round ≈ 09:40`. State lives in `data/serve.json`; the settings in `config/serve.yaml` (template `config/serve.example.yaml`: window, round cap, pause, jitter, per-source `time_limit` / `every` / `enabled: false`, filter tries, `retention`).
+
+**Cleanup:** expired jobs are archived (or, never judged, deleted) in the round where their date passes. Once a day (`retention: 24h`; `null` = never) a round also drops old raw pages, sightings and logs, as `data purge` would; the report adds e.g. `retention: 120 postings' raw data, 300 sightings, 2 log files dropped`.
 
 | command | |
 |---|---|
@@ -474,9 +477,15 @@ uv run auto-app schedule remove
 ### `job` — the job pool
 
 #### `job list` · `job show JOB_ID`
+**For Claude Code / scripts** (the manager, below): `--json` (both) gives machine-readable output, and `job show --json -d` includes the description, each filter's verdict and your labels. `job list` also narrows with:
+- `--since 2h | 1d | 2026-10-06` (with `--state recommended`: recommended since; otherwise first collected since);
+- `--posted-within N` (days);
+- `--search <text>` (title, company, places, sources);
+- `--not-notified` (not yet told about; see `job notified`).
+
 Lists active jobs, newest posting date first, sized to your terminal:
 
-- one row per job: number, posted date, company (as the posting shows it), title, where (`Austin, TX +2`), the sources it was found on (`linkedin, nvidia`), and when it **expires** (`in 12d`; `due` = the next purge deletes or archives it; `!` = recommended and undecided, archived within 3 days; `queued` = want to apply, never expires while waiting for Step 3);
+- one row per job: number, posted date, company (as the posting shows it), title, where (`Austin, TX +2`), the sources it was found on (`linkedin, nvidia`), and when it **expires** (`in 12d`; `due` = past its date, archived or deleted at the next collect / judging / decision; `!` = recommended and undecided, archived within 3 days; `queued` = want to apply, never expires while waiting for Step 3);
 - a state column appears once jobs are in different states; ⚠ marks a repost warning;
 - the summary line counts the jobs found on more than one source.
 
@@ -581,8 +590,12 @@ Sets jobs' state by hand (in the app: `m` in `job browse`) — normally `filter 
 uv run auto-app job mark 28 --as applied
 uv run auto-app job mark 31 --as want_to_apply
 uv run auto-app job mark 12 13 14 --as un_recommended
+uv run auto-app job mark 41 --as not_applied --reason "it's in NYC"
 ```
-Output: one line per job with its new state and expiry date.
+Output: one line per job with its new state and expiry date. `want_to_apply` / `not_applied` are recorded as **your decision**, exactly like the app's `a` / `n`: with each filter's verdict, and `--reason` as the app's `r`. So the filters learn from it.
+
+#### `job notified JOB_ID...`
+Marks jobs as told about (the manager's digest): `job list --not-notified` leaves them out from then on.
 
 ---
 
@@ -663,6 +676,15 @@ Why a job was or wasn't recommended: for each filter that judged it — its vers
 ```bash
 uv run auto-app filter why 28
 uv run auto-app filter why 28 --trace
+uv run auto-app filter why 28 --json      # for Claude Code / scripts
+```
+
+#### `filter label JOB_ID (--should | --shouldnt) [-f FILTER] [--reason …]`
+Your label for a filter's verdict on a job, the app's 👍 `g` / 👎 `b` from the command line: should that filter recommend this job? Without `-f`, it labels every filter that judged it (`--shouldnt` = "no filter should", the app's `B`). Labels drive `filter eval` and the audit.
+
+```bash
+uv run auto-app filter label 41 -f ml-engineer --shouldnt --reason "sales, not engineering"
+uv run auto-app filter label 57 --should
 ```
 
 #### `filter audit`
@@ -722,6 +744,13 @@ Ranges are 95% Wilson intervals. Nothing is cached — every label changes the n
 ```bash
 uv run auto-app filter eval
 uv run auto-app filter eval -f ml-engineer --all-versions
+```
+
+#### `filter unjudgeable`
+Lists the jobs a filter gave up on (they failed 3 times; `serve` marks them), each with the filter, the tries and the last error. `--json` for Claude Code / scripts. `filter run --job N` gives one a fresh start.
+
+```bash
+uv run auto-app filter unjudgeable
 ```
 
 #### `filter reparse`
@@ -896,7 +925,7 @@ uv run auto-app data import
 ```
 
 #### `data purge`
-Two passes:
+Expired jobs don't wait for a purge: they're archived or deleted whenever job dates are refreshed (after collecting, judging, a decision), and `serve` applies the retention below once a day. `data purge` does both now, with a report. Two passes:
 
 1. **Job TTL** (`AUTO_APP_JOBS__TTL_DAYS__*` in `.env`; the clock is the time since any of the job's postings was last seen — refreshed whenever collect sees them, including as `known`):
    - jobs a filter **judged** — recommended (30 days) or un-recommended (7 days) — and jobs you decided on are **archived**, never deleted: they're **training data** for evaluation and the preference model. Kept: a record (summary, Step 2 result, your decision, the original posting identities, matching keys) plus what a filter reads (the primary posting's parsed fields, description included); dropped: raw data, normalized data, the other postings' parsed data. Archived jobs are hidden from `job list` (see `--archived`), never judged again and **never merged with active jobs** — a listing seen again becomes a new job. Among themselves they're **deduplicated**: one with the same title and a shared matching key as an earlier archived job is linked to it (one training example);
@@ -916,6 +945,24 @@ uv run auto-app data purge --vacuum
 ```
 
 ---
+
+## The manager: Claude Code
+
+Open **Claude Code** (the CLI, `claude` in this folder, or the desktop app) on this project and talk to it. **`CLAUDE.md`** gives every session the picture: what the app does, the job states, the skills, the rules. Type **`/auto-app`** to start a session: it checks `serve`, what's new and what's waiting, and briefs you. It knows the app through **project skills** in `.claude/skills/`, which teach it the commands, how to read them, and the rules:
+
+| skill | for |
+|---|---|
+| `auto-app` (`/auto-app`) | start a session: the loop's state, new recommendations, your queue, problems, in a few lines |
+| `job-briefing` | "what's new?": the digest of new recommendations (then `job notified`), a job's details, why a filter said yes / no, comparisons |
+| `job-decisions` | "apply to the two ML ones, skip the NYC ones": `job mark` with your reasons; bulk rules are shown first and confirmed |
+| `filter-feedback` | "this shouldn't have been recommended": `filter label`; `filter eval`; proposes filter edits (only with your OK) |
+| `pipeline-control` | "is it running?", "pause until Monday": `serve status / pause / resume`, schedule changes (with your OK) |
+| `troubleshooting` | "why no new jobs?": the loop, source health, the last collect, broken filters, usage |
+| `application-tracking` | "what's in my queue?", "I applied to #41", history |
+| `app-config` | "also search for applied scientist in Seattle", "add Stripe", "change the job TTL": searches, sources, logins, settings. Shows each change first, verifies it after (`source plan`); never edits `.env` |
+| `filter-authoring` | "make a filter for research roles", "my filter is too strict": asks what you want, drafts `command.md` / `filter.yaml`, **tries it on jobs you've already decided** and compares, then lets it judge the pool and measures it (`filter eval`). Asks before every run that costs usage |
+
+When `serve` finds new recommendations, it sends a notification: "ask Claude Code". Ask "what's new?" and it writes the digest. It never submits an application, confirms bulk changes and edits, and can't read `.env` or `profile/` (`.claude/settings.json`; that file also lets it run the read-only commands without asking).
 
 ## Where the data goes
 

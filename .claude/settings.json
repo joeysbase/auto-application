@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run auto-app job list:*)",
+      "Bash(uv run auto-app job show:*)",
+      "Bash(uv run auto-app job notified:*)",
+      "Bash(uv run auto-app filter why:*)",
+      "Bash(uv run auto-app filter eval:*)",
+      "Bash(uv run auto-app filter list:*)",
+      "Bash(uv run auto-app source health --json:*)",
+      "Bash(uv run auto-app collect stats:*)",
+      "Bash(uv run auto-app serve status:*)",
+      "Bash(uv run auto-app apply queue:*)",
+      "Bash(uv run auto-app apply list:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./profile/**)"
+    ]
+  }
+}

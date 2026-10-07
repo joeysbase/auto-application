@@ -1,6 +1,6 @@
 # Step 4 — Run: the scheduler and the manager agent
 
-Status: **R1 ✅** (2026-10-06: `auto-app serve`, rounds, the batch, the edge cases — as built, §11); R2–R4 📐 designed. **2026-10-06, your call: the manager is Claude Code** (the CLI or the desktop
+Status: **R1 ✅ R2 ✅** (2026-10-06: `auto-app serve` — as built §11; the manager in Claude Code — as built §12); R3–R4 📐 designed / parked. **2026-10-06, your call: the manager is Claude Code** (the CLI or the desktop
 app, on this project) with project skills; Claude Code handles memory and the conversation. **Slack is deferred**
 (§4's Slack parts, §6–§8). **Applying from Slack (§6, R4) is parked** while automated applying is off: *Apply* in Slack only queues the job (want to apply), and you apply by hand.
 
@@ -343,7 +343,7 @@ Library: `slack_bolt` (async, Socket Mode).
 | # | Deliverable |
 |---|---|
 | R1 ✅ | `auto-app serve`: the loop (collect → filter batch → pause, waiting for both), the round goal in the collector (caught up / time cap / volume caps, time spread across searches), the window, pause / resume / status (`data/serve.json`), the edge cases (usage → wait, unjudgeable jobs, a broken filter → notify and stop), round reports; launchd install, macOS notifications |
-| R2 | **The manager in Claude Code:** the missing commands of §5.3 (`--json`, `filter label`, `job mark --reason`, `job list --since / --posted-within / --search / --not-notified`, `job notified`, optional snooze), the project skills of §5.4 with the rules of §5.5, and `serve`'s "new recommendations — ask Claude Code" notification |
+| R2 ✅ | **The manager in Claude Code:** the missing commands of §5.3 (`--json`, `filter label`, `job mark --reason`, `job list --since / --posted-within / --search / --not-notified`, `job notified`, optional snooze), the project skills of §5.4 with the rules of §5.5, and `serve`'s "new recommendations — ask Claude Code" notification |
 | R3 | *(deferred)* Slack: the app manifest, `serve` waking a headless manager for the digest, the plain fallback, buttons |
 | R4 | *(parked)* Applying from Slack: Apply → the trial run, questions in threads, action needed, Ready cards, the Submit button and confirmation |
 
@@ -403,3 +403,52 @@ the manager may change filters (e.g. "stop recommending NYC jobs" → feedback, 
   `tests/test_serve.py`. The serve tests use a fake clock: the pause from the end of collecting, a slow batch holding
   the next round, the window and pause, usage → wait and judge again, a broken filter → stop until resume, unjudgeable
   jobs, per-source cycles, `--once`, and the template.
+
+## 12. As built: R2, the manager in Claude Code (2026-10-06)
+
+- **The missing commands of §5.3:**
+  - `--json` on `job list`, `job show` (`-d`: the description, plus verdicts and your labels), `filter why` (each
+    judgment: verdict, reason, lookups, current version, your label), `serve status` (state + the effective config),
+    `source health`, `apply queue`, `apply list`, `collect stats`;
+  - `job list --since` (a duration or a date; with `--state recommended`: recommended since), `--posted-within`,
+    `--search`, `--not-notified`;
+  - **`job mark --reason`**: `want_to_apply` / `not_applied` now go through the same path as the app's `a` / `n`
+    (a `reviews` row with the filters' verdicts and the reason; implied labels on applying);
+  - **`filter label`** (`--should / --shouldnt`, `-f`, `--reason`; without `-f`: every filter, as `B`);
+  - **`job notified`** (a `notified_at` column on jobs, migration `4d6750b14a8d`).
+  - Snooze is not built (optional).
+  - `filter eval --json` is still to do: its table is read as text for now.
+- **Project skills** (`.claude/skills/<name>/SKILL.md`): `job-briefing` (the digest of §4, then `job notified`),
+  `job-decisions`, `filter-feedback`, `pipeline-control`, `troubleshooting`, `application-tracking`. Each has its
+  commands, how to read them, and its rules (§5.5). `filter-tuning` and `sources-and-searches` are folded into
+  `filter-feedback` and `pipeline-control` for now.
+- **`.claude/settings.json`:** read-only commands allowed without a prompt (`job list / show / notified`,
+  `filter why / eval / list`, `source health --json`, `collect stats`, `serve status`, `apply queue / list`); every
+  change asks. **Reading `.env` and `profile/` is denied.**
+- **Checked live:** a headless Claude Code session in this project, asked "what's new?" (on the scratch database), used
+  `job-briefing` by itself. It listed the 4 new recommendations, strongest first, with the filter's reasons, places,
+  onsite / remote and the links, and asked whether to skip the weakest one.
+- **Tests:** `tests/test_manager_cli.py`: the JSON outputs, `--since / --search / --not-notified`, `job notified`,
+  `job mark --reason` recorded like the app, `filter label` per filter and for every filter.
+
+## 13. Cleanup: expiry and retention (2026-10-06)
+
+The Step 1 daily `schedule` ran `run --purge`, so every run expired jobs and dropped old data. `serve` replaced it
+without the purge, so with `serve` alone **nothing expired**: closed jobs stayed in the lists, reposts merged into
+old jobs, `data/` grew. Fixed:
+- **Expiry is part of the job model, not of a runner.** `DbStore.refresh_job_dates`, which every write path already
+  calls (dedup after collecting, judging, decisions, the apps, the queue), now also archives or deletes the jobs past
+  their date (`job_ttl.expire_jobs`, the same rules as `data purge`):
+  - never judged → deleted;
+  - judged or decided → archived;
+  - `want_to_apply` never expires.
+
+  With `serve` running, a job goes in the round where its date passes. Read-only commands (`job list`) don't write,
+  so between rounds a job can show as `due`.
+- **Retention** (raw pages, sightings, logs: disk housekeeping) runs in `serve` after a round's batch, once per
+  `retention` (`config/serve.yaml`, default `24h`; `null` = never). The round report and `serve status` show it.
+- `data purge` and `run --purge` are unchanged (both passes, with a report).
+- **Decided: no safeguard** against expiring a job that is still posted but not seen. That happens when a source
+  can't collect for days, or with LinkedIn's early stop: a job deep in the results is never reached again
+  (§9 caveat in step1-collect.md). Expiry stays purely time-since-last-seen. Archived jobs keep everything, and a
+  posting seen again comes back as a new job with a repost warning.

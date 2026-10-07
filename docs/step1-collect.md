@@ -574,7 +574,7 @@ company_aliases (alias_norm PK, company_norm, origin)   -- learned aliases
 
 ## 9. Retention (TTL)
 
-Two kinds of expiry, both applied by `auto-app data purge` (and `run --purge`, the schedule): a **job TTL** that deletes or archives whole jobs, and **posting-data retention** that drops heavy data from live postings.
+Two kinds of expiry: a **job TTL**, applied **whenever job dates are refreshed** (after collecting, judging or a decision — whoever runs it; and by `auto-app data purge`), that deletes or archives whole jobs, and **posting-data retention** that drops heavy data from live postings (`data purge`, `run --purge`, and `serve` once a day).
 
 ### 9.1 Job TTL (C11, implemented: `src/auto_app/core/db/job_ttl.py`)
 
@@ -583,7 +583,7 @@ One global setting; the clock is the time since **any** of the job's postings wa
 ```bash
 # .env (global settings; template .env.example)
 AUTO_APP_JOBS__TTL_DAYS__UNFILTERED=14        # not evaluated by Step 2 yet → deleted
-AUTO_APP_JOBS__TTL_DAYS__UN_RECOMMENDED=7     # Step 2 left it out → deleted
+AUTO_APP_JOBS__TTL_DAYS__UN_RECOMMENDED=7     # Step 2 left it out → archived (judged = training data)
 AUTO_APP_JOBS__TTL_DAYS__RECOMMENDED=30       # undecided, applied or not applied → archived
 ```
 
@@ -594,9 +594,10 @@ AUTO_APP_JOBS__TTL_DAYS__RECOMMENDED=30       # undecided, applied or not applie
 | recommended (undecided, applied, not applied) | **archived** (9.2) |
 | want to apply (queued for Step 3) | **never expires while queued**; follows the recommended TTL once applied or withdrawn |
 
-- `expires_at` (= `last_seen_at` + the state's TTL) is kept on every active job; `auto-app job list` shows "in N d" (`due` = the next purge acts on it) and flags recommended-undecided jobs (`!`) 3 days before they're archived.
+- `expires_at` (= `last_seen_at` + the state's TTL) is kept on every active job; `auto-app job list` shows "in N d" (`due` = past its date: the next refresh — the next round — archives or deletes it) and flags recommended-undecided jobs (`!`) 3 days before they're archived.
 - `auto-app job mark JOB… --as STATE` (or `m` in `auto-app job browse`) sets the state by hand; a decision (`want_to_apply` / `applied` / `not_applied`) keeps Step 2's verdict, or marks the job recommended if it has none.
-- `dedup` only refreshes `last_seen_at` / `expires_at`; deleting and archiving happen in `purge`, and `purge --dry-run` lists the jobs it would delete or archive.
+- Every refresh of `last_seen_at` / `expires_at` (`DbStore.refresh_job_dates`: dedup, judging, decisions, the apps) also deletes or archives the jobs past their date (`job_ttl.expire_jobs`); `purge` does the same with a report, and `purge --dry-run` lists the jobs it would delete or archive.
+- **Changed 2026-10-06:** until then only `purge` deleted or archived, so with `serve` (which doesn't purge) jobs never expired. Expiry is now part of the job model, independent of the runner.
 - **Bug fixed (found and fixed 2026-10-04, Step 2 S4):** deleting an un_recommended job that Step 2 judged failed on the `judgments` foreign key, so `data purge` stopped. Judged jobs are now archived, never deleted ([step2 §7.8](step2-select.md)).
 - Caveat: "not seen" isn't always "closed". Company sources with `posted_within_days: all` re-list every open job each run; LinkedIn searches only show recent postings and stop early, so a still-open LinkedIn job can stop being seen and expire.
 

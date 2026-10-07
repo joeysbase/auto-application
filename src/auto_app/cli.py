@@ -456,6 +456,52 @@ def dedup(
 STATES = ("not_evaluated", "un_recommended", "recommended", "want_to_apply", "applied", "not_applied")
 
 
+JsonOpt = Annotated[bool, typer.Option("--json", help="Machine-readable output (for Claude Code / scripts)")]
+
+
+def _emit_json(obj) -> None:
+    typer.echo(json.dumps(obj, indent=2, default=str, ensure_ascii=False))
+
+
+def _since(text: str | None):
+    """--since: a duration back from now (2h, 1d) or a date / time (2026-10-06, 2026-10-06 09:00) → an aware datetime."""
+    if not text:
+        return None
+    from datetime import timezone
+
+    from auto_app.core.duration import parse_duration
+
+    try:
+        return datetime.now(timezone.utc) - timedelta(seconds=parse_duration(text))
+    except ValueError:
+        try:
+            d = datetime.fromisoformat(text)
+        except ValueError:
+            raise typer.BadParameter(f"not a duration or a date: {text!r} (e.g. 2h, 1d, 2026-10-06 09:00)",
+                                     param_hint="--since")
+        return d.astimezone(timezone.utc) if d.tzinfo is None else d
+
+
+def _aware(v):
+    if not v:
+        return None
+    from datetime import timezone
+
+    d = datetime.fromisoformat(v) if isinstance(v, str) else v
+    return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+
+JOB_FIELDS = ("job_id", "title", "company", "locations", "sources", "posted_at", "first_seen_at", "state", "step2",
+              "step2_at", "decision", "decided_at", "expires_at", "canonical_url", "notified_at", "warnings")
+
+
+def _job_json(j: dict) -> dict:
+    out = {k: j.get(k) for k in JOB_FIELDS}
+    out["company"] = j.get("company") or j.get("company_norm")
+    out["apply_url"] = out.pop("canonical_url")
+    return out
+
+
 def _jobs(
     job_id: Annotated[Optional[int], typer.Argument(help="Show one job: its details, postings and matching keys")] = None,
     source: Annotated[Optional[list[str]], typer.Option("--source", "-s", help="Only jobs found on this source (repeatable)")] = None,
@@ -465,6 +511,7 @@ def _jobs(
     archived: Annotated[bool, typer.Option("--archived", help="List archived job records instead of active jobs")] = False,
     limit: Annotated[Optional[int], typer.Option(help="Show at most N jobs (newest first)")] = None,
     out: OutOpt = None,
+    since=None, posted_within=None, search=None, not_notified=False, as_json=False,
 ):
     """List jobs (deduplicated openings), newest first, or show one job in detail."""
     from auto_app.process.jobs_view import _newest_first, format_job, format_job_list
@@ -476,6 +523,8 @@ def _jobs(
         if not j:
             typer.echo(f"no job #{job_id}", err=True)
             raise typer.Exit(1)
+        if as_json:
+            return j
         text = format_job(j, store.job_postings(job_id), store.job_keys_of(job_id))
         if j.get("archived_at") and j.get("decision") == "applied":
             desc = store.archived_description(job_id)
@@ -486,6 +535,8 @@ def _jobs(
         raise typer.BadParameter(f"expected one of {', '.join(STATES)}", param_hint="--state")
     rows = store.jobs(archived=archived)
     if not rows:
+        if as_json:
+            return _emit_json([])
         typer.echo("no archived jobs" if archived else "no jobs yet — run `auto-app process dedup`")
         return
     if state:
@@ -495,11 +546,32 @@ def _jobs(
         rows = [j for j in rows if set(source) & set(j["sources"])]
     if company:
         rows = [j for j in rows if company.lower() in (j.get("company") or j.get("company_norm") or "").lower()]
+    if since is not None:  # new since: recommended since (with --state recommended), else first collected since
+        key = "step2_at" if state == "recommended" else "first_seen_at"
+        rows = [j for j in rows if (_aware(j.get(key)) or _aware(j.get("first_seen_at"))) and
+                (_aware(j.get(key)) or _aware(j.get("first_seen_at"))) >= since]
+    if posted_within is not None:
+        from datetime import timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=posted_within)
+        rows = [j for j in rows if _aware(j.get("posted_at")) and _aware(j.get("posted_at")) >= cutoff]
+    if search:
+        q = search.lower()
+        rows = [j for j in rows if q in " ".join(str(x) for x in (j.get("title"), j.get("company"), j.get("company_norm"),
+                                                                  " ".join(j.get("locations") or []),
+                                                                  " ".join(j.get("sources") or []))).lower()]
+    if not_notified:
+        rows = [j for j in rows if not j.get("notified_at")]
     if not rows:
+        if as_json:
+            return _emit_json([])
         typer.echo("no jobs match those filters")
         return
+    rows = sorted(rows, key=_newest_first, reverse=True)
     if limit:
-        rows = sorted(rows, key=_newest_first, reverse=True)[:limit]
+        rows = rows[:limit]
+    if as_json:
+        return _emit_json([_job_json(j) for j in rows])
     typer.echo(format_job_list(rows))
 
 
@@ -579,18 +651,32 @@ def _known_filters(store, fs, names: list[str] | None) -> None:
 def mark(
     job_ids: Annotated[list[int], typer.Argument(help="Job number(s)", metavar="JOB_ID...")],
     to: Annotated[str, typer.Option("--as", help="recommended | un_recommended | want_to_apply | applied | not_applied | not_evaluated")],
+    reason: Annotated[Optional[str], typer.Option(help="Why (want_to_apply / not_applied): saved with your decision, "
+                                                       "as the app's r — the filters learn from it")] = None,
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
-    """Set jobs' state by hand (until Steps 2–3 do it): Step 2's verdict and/or your decision."""
+    """Set jobs' state by hand: Step 2's verdict and/or your decision. want_to_apply / not_applied are recorded as your
+    decision (with the filters' verdicts and --reason), exactly as `a` / `n` in the app."""
     cfg = _config_or_env(config)
     store = _store(out, cfg)
     _require_db(store, "`mark`")
     if to not in STATES:
         raise typer.BadParameter(f"expected one of {', '.join(STATES)}", param_hint="--as")
+    if reason and to not in ("want_to_apply", "not_applied"):
+        raise typer.BadParameter("a reason goes with want_to_apply or not_applied", param_hint="--reason")
+    review = None
+    if to in ("want_to_apply", "not_applied"):  # your decision, recorded like the app's a / n
+        from auto_app.select.filters import FILTERS_DIR, load_filters
+        from auto_app.select.review import Review
+
+        review = Review(store, list(load_filters(FILTERS_DIR).filters.values()), ttl=cfg.jobs.ttl_days)
     for job_id in job_ids:
         try:
-            store.mark_job(job_id, to)
+            if review is not None:
+                review.decide(job_id, to, reason)
+            else:
+                store.mark_job(job_id, to)
         except ValueError as e:
             typer.echo(str(e), err=True)
             raise typer.Exit(1)
@@ -598,6 +684,18 @@ def mark(
     for job_id in job_ids:
         j = store.job(job_id)
         typer.echo(f"job #{job_id}: {j['state']}  (expires {(j.get('expires_at') or '—')[:10]})  {j.get('title') or ''}")
+
+
+@job_app.command("notified")
+def job_notified(
+    job_ids: Annotated[list[int], typer.Argument(help="Job number(s)", metavar="JOB_ID...")],
+    out: OutOpt = None,
+):
+    """Mark jobs as told about (the manager's digest): `job list --not-notified` leaves them out from now on."""
+    store = _store(out)
+    _require_db(store, "`job notified`")
+    n = store.set_notified(job_ids)
+    typer.echo(f"{n} job(s) marked as notified")
 
 
 def _filters(
@@ -801,11 +899,78 @@ def _select(
     typer.echo("review them: auto-app job browse · details of one job: auto-app filter why <#>")
 
 
+@filter_app.command("label")
+def filter_label(
+    job_id: Annotated[int, typer.Argument(help="Job number")],
+    filter_: Annotated[Optional[str], typer.Option("--filter", "-f", help="The filter you're labelling for "
+                                                                          "(default: every filter that judged the job)")] = None,
+    should: Annotated[Optional[bool], typer.Option("--should/--shouldnt",
+                                                   help="Should this filter recommend this job, or not?")] = None,
+    reason: Annotated[Optional[str], typer.Option(help="Why — saved with the label")] = None,
+    out: OutOpt = None,
+):
+    """Your label for a filter on a job — 👍 should recommend / 👎 shouldn't (as g / b / B in the app). Without
+    --filter: every filter that judged it (--shouldnt: "no filter should")."""
+    from auto_app.process.job_browser import JobBrowser
+    from auto_app.select.filters import FILTERS_DIR, load_filters
+
+    if should is None:
+        raise typer.BadParameter("say --should or --shouldnt", param_hint="--should/--shouldnt")
+    store = _store(out)
+    _require_db(store, "`filter label`")
+    if not store.job(job_id):
+        typer.echo(f"no job #{job_id}", err=True)
+        raise typer.Exit(1)
+    b = JobBrowser(store, list(load_filters(FILTERS_DIR).filters.values()))
+    try:
+        if filter_:
+            b.label(job_id, filter_, should, reason)
+            names = [filter_]
+        else:
+            names = b.label_all(job_id, should)
+            if reason:
+                for n in names:
+                    row = store.feedback_of(job_id).get(n)
+                    if row:
+                        store.set_feedback({**row, "reason": reason})
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    if not names:
+        typer.echo(f"no filter has judged job #{job_id} yet — nothing to label", err=True)
+        raise typer.Exit(1)
+    word = "should recommend" if should else "shouldn't recommend"
+    typer.echo(f"job #{job_id}: {', '.join(names)} {word} it" + (f" — {reason}" if reason else ""))
+
+
+@filter_app.command("unjudgeable")
+def filter_unjudgeable(as_json: JsonOpt = False, out: OutOpt = None):
+    """Jobs a filter gave up on (they failed too often — `serve` marks them): each with the filter and the last error.
+    `auto-app filter run --job N` gives one a fresh start."""
+    from auto_app.select.health import unjudgeable_rows
+
+    store = _store(out)
+    _require_db(store, "`filter unjudgeable`")
+    rows = unjudgeable_rows(store)
+    if as_json:
+        return _emit_json([{**{k: r[k] for k in ("job_id", "filter", "tries", "last_error", "unjudgeable_at")},
+                            "title": (store.job(r["job_id"]) or {}).get("title")} for r in rows])
+    if not rows:
+        typer.echo("no unjudgeable jobs")
+        return
+    for r in rows:
+        j = store.job(r["job_id"]) or {}
+        typer.echo(f"#{r['job_id']:<5} {r['filter']:<16} {r['tries']} tries · {(j.get('title') or '')[:40]:<40} "
+                   f"{(r['last_error'] or '')[:80]}")
+    typer.echo("\nretry one: auto-app filter run --job N")
+
+
 @filter_app.command("why")
 def why(
     job_id: Annotated[int, typer.Argument(help="Job number")],
     trace: Annotated[bool, typer.Option(help="Show every model turn and tool result")] = False,
     directory: Annotated[Optional[Path], typer.Option("--dir", help="Filters folder (default: <project>/filters)")] = None,
+    as_json: JsonOpt = False,
     out: OutOpt = None,
 ):
     """Step 2: why a job was (or wasn't) recommended — each filter's answer, how it was read, what it looked up."""
@@ -819,6 +984,19 @@ def why(
         typer.echo(f"no job #{job_id}", err=True)
         raise typer.Exit(1)
     current = {f.name: f.version for f in load_filters(directory or FILTERS_DIR).filters.values()}
+    if as_json:
+        labels = store.feedback_of(job_id)
+        out_rows = []
+        for r in store.judgment_rows(job_id=job_id, with_answer=True):
+            lookups = [{"tool": b.get("name"), "input": b.get("input")} for t in (r.get("trace") or [])
+                       for b in t.get("blocks", []) if b.get("type") in ("server_tool_use", "tool_use")]
+            fb = labels.get(r["filter"])
+            out_rows.append({"filter": r["filter"], "current_version": current.get(r["filter"]) == r["filter_version"],
+                             "status": r["status"], "recommend": r["recommend"], "fit": r["fit"],
+                             "dealbreaker": r["dealbreaker"], "reason": r["reason"], "error": r["error"],
+                             "lookups": lookups, "judged_at": r["created_at"],
+                             "your_label": ({"should_recommend": fb["label"], "reason": fb.get("reason")} if fb else None)})
+        return _emit_json({"job": _job_json(j), "judgments": out_rows})
     typer.echo(f"job #{job_id}  {j.get('title') or ''} — {j.get('company') or j.get('company_norm') or ''}")
     typer.echo(f"state: {j['state']}" + (f" (Step 2: {j['step2']})" if j.get("step2") else ""))
     rows = store.judgment_rows(job_id=job_id, with_answer=True)
@@ -1114,14 +1292,20 @@ def export(
 
 
 @collect_app.command("stats")
-def stats(batch: Annotated[Optional[str], typer.Argument(help="Batch id; default: latest")] = None, out: OutOpt = None):
+def stats(batch: Annotated[Optional[str], typer.Argument(help="Batch id; default: latest")] = None,
+          as_json: JsonOpt = False, out: OutOpt = None):
     """Show search runs and outcomes for a batch."""
-    typer.echo(format_batch(_store(out), batch))
+    store = _store(out)
+    if as_json:
+        b = store.get_batch(batch)
+        return _emit_json({"batch": b, "runs": store.get_search_runs(b["batch_id"]) if b else []})
+    typer.echo(format_batch(store, batch))
 
 
 @source_app.command("health")
 def sources(
     reset: Annotated[Optional[str], typer.Option(help="Clear cooldown / login status for a source")] = None,
+    as_json: JsonOpt = False,
     out: OutOpt = None,
 ):
     """Show per-source health (ok / needs_login / cooldown)."""
@@ -1131,6 +1315,8 @@ def sources(
     health = store.health()
     cfg = _config_or_env(None)
     names = list(dict.fromkeys([*(n for n, sc in cfg.sources.items() if sc.searches), *health]))
+    if as_json:
+        return _emit_json({s: health.get(s, {"status": "ok"}) for s in names or SOURCES})
     for s in names or SOURCES:
         h = health.get(s, {"status": "ok"})
         extra = f" until {h['cooldown_until']}" if h.get("cooldown_until") else ""
@@ -1149,19 +1335,49 @@ def job_list(
         help="Only jobs in this state: not_evaluated | un_recommended | recommended (undecided) | want_to_apply | applied | not_applied")] = None,
     archived: Annotated[bool, typer.Option("--archived", help="List archived job records instead of active jobs")] = False,
     limit: Annotated[Optional[int], typer.Option(help="Show at most N jobs (newest first)")] = None,
+    since: Annotated[Optional[str], typer.Option(help="New since: 2h, 1d, or a date / time (with --state recommended: "
+                                                      "recommended since; otherwise first collected since)")] = None,
+    posted_within: Annotated[Optional[int], typer.Option("--posted-within", help="Posted within N days")] = None,
+    search: Annotated[Optional[str], typer.Option(help="Text in the title, company, places or sources")] = None,
+    not_notified: Annotated[bool, typer.Option("--not-notified", help="Only jobs you haven't been told about yet "
+                                                                      "(`job notified`)")] = False,
+    as_json: JsonOpt = False,
     out: OutOpt = None,
 ):
     """List jobs (deduplicated openings), newest first."""
-    _jobs(None, source, company, state, archived, limit, out)
+    _jobs(None, source, company, state, archived, limit, out, since=_since(since), posted_within=posted_within,
+          search=search, not_notified=not_notified, as_json=as_json)
 
 
 @job_app.command("show")
 def job_show(
     job_id: Annotated[int, typer.Argument(help="Job number")],
     description: Annotated[bool, typer.Option("--description", "-d", help="Also print the job's full description")] = False,
+    as_json: JsonOpt = False,
     out: OutOpt = None,
 ):
     """One job: details, state and expiry, its postings and how they matched, its matching keys."""
+    if as_json:
+        store = _store(out)
+        _require_db(store, "`job show`")
+        j = store.job(job_id)
+        if not j:
+            typer.echo(f"no job #{job_id}", err=True)
+            raise typer.Exit(1)
+        parsed, locations = store.job_inputs(job_id)
+        obj = _job_json(j)
+        p = parsed or {}
+        obj.update({k: p.get(k) for k in ("workplace_type", "employment_type", "salary", "seniority") if p.get(k)})
+        obj["postings"] = [{k: x.get(k) for k in ("source", "source_job_id", "url", "title", "posted_at")}
+                           for x in store.job_postings(job_id)]
+        obj["verdicts"] = [{"filter": r["filter"], "recommend": r["recommend"], "fit": r["fit"],
+                            "dealbreaker": r["dealbreaker"], "reason": r["reason"], "status": r["status"]}
+                           for r in store.judgment_rows(job_id=job_id)]
+        obj["your_labels"] = {f: {"should_recommend": fb["label"], "reason": fb.get("reason")}
+                              for f, fb in store.feedback_of(job_id).items()}
+        if description:
+            obj["description"] = p.get("description_text") or (store.archived_description(job_id) if j.get("archived_at") else "")
+        return _emit_json(obj)
     _jobs(job_id, None, None, None, False, None, out)
     if description:
         store = _store(out)
@@ -1489,12 +1705,16 @@ def apply_accounts(config: ConfigOpt = None, out: OutOpt = None):
 
 
 @apply_app.command("queue")
-def apply_queue(config: ConfigOpt = None, out: OutOpt = None):
+def apply_queue(as_json: JsonOpt = False, config: ConfigOpt = None, out: OutOpt = None):
     """The jobs you queued (want to apply), in the policy's order, with each one's platform, applier chain and status."""
     cfg = _config_or_env(config)
     store = _store(out, cfg)
     _require_db(store, "`apply queue`")
     rows = _applications(cfg, store).queue()
+    if as_json:
+        return _emit_json([{**_job_json(j), "platform": j["platform"],
+                            "application": ({k: j["application"].get(k) for k in ("application_id", "status", "applier")}
+                                            if j["application"] else None)} for j in rows])
     if not rows:
         typer.echo("nothing queued — mark jobs `a` (want to apply) in `auto-app job browse`")
         return
@@ -1556,6 +1776,7 @@ def apply_inbox(config: ConfigOpt = None, out: OutOpt = None):
 @apply_app.command("list")
 def apply_list(
     status: Annotated[Optional[str], typer.Option(help="Only this status: queued | handoff | failed | submitted | dropped")] = None,
+    as_json: JsonOpt = False,
     config: ConfigOpt = None,
     out: OutOpt = None,
 ):
@@ -1565,6 +1786,9 @@ def apply_list(
     _require_db(store, "`apply list`")
     apps = _applications(cfg, store)
     rows = apps.rows((status,) if status else None)
+    if as_json:
+        return _emit_json([{k: r.get(k) for k in ("application_id", "job_id", "company", "title", "platform", "status",
+                                                  "applier", "created_at", "submitted_at", "note")} for r in rows])
     if not rows:
         typer.echo("no applications" + (f" with status {status}" if status else "") + " yet")
         return
@@ -1673,8 +1897,15 @@ def serve_run(
     signal.signal(signal.SIGINT, on_stop)
     awake = None
     awake = keep_awake()
+    def retention():
+        from auto_app.core.db.purge import purge
+
+        rep = purge(store, cfg.retention)  # posting data only: jobs expire by themselves
+        return (f"{rep.raw_postings} postings' raw data, {rep.sightings} sightings, "
+                f"{rep.log_files} log files dropped")
+
     serve = Serve(scfg, State(state_path), collect, judge, notify, store=store,
-                  rounds_log=paths.logs / "serve-rounds.jsonl")
+                  rounds_log=paths.logs / "serve-rounds.jsonl", retention=retention)
     typer.echo(f"serve: rounds until caught up (cap {scfg.round.time_limit or 'none'}), then a {scfg.interval} pause · "
                f"window {scfg.window.days} {scfg.window.start}–{scfg.window.end} · state {state_path}")
     try:
@@ -1695,12 +1926,15 @@ def serve_run(
 
 
 @serve_app.command("status")
-def serve_status():
+def serve_status(as_json: JsonOpt = False):
     """What `serve` is doing: running / paused / stopped, the next round, the last round's report."""
     from auto_app.serve import State, describe
 
     _, state_path = _serve_paths()
-    typer.echo(describe(_serve_config(), State(state_path).read()))
+    st = State(state_path).read()
+    if as_json:
+        return _emit_json({**st, "config": _serve_config().model_dump()})
+    typer.echo(describe(_serve_config(), st))
 
 
 @serve_app.command("pause")
@@ -1774,8 +2008,8 @@ _ORDER = {
     source_app: ["list", "show", "add", "login", "health", "plan"],
     collect_app: ["run", "probe", "stats"],
     process_app: ["parse", "normalize", "dedup"],
-    job_app: ["list", "show", "browse", "mark"],
-    filter_app: ["list", "show", "run", "why", "audit", "eval", "reparse"],
+    job_app: ["list", "show", "browse", "mark", "notified"],
+    filter_app: ["list", "show", "run", "why", "label", "audit", "eval", "unjudgeable", "reparse"],
     data_app: ["inspect", "export", "import", "purge"],
     schedule_app: ["install", "show", "remove"],
     apply_app: ["profile", "policy", "login", "accounts", "queue", "run", "inbox", "list"],

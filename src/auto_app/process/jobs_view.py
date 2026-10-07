@@ -77,7 +77,7 @@ def _days_left(j: dict, now: datetime | None = None) -> int | None:
 
 
 def expiry(j: dict, now: datetime | None = None) -> str:
-    """"in 12d" / "today" / "due" (the next purge removes or archives it); archived jobs: the archive date."""
+    """"in 12d" / "today" / "due" (past its date: the next refresh — collect, judge, decide — archives or deletes it); archived jobs: the archive date."""
     if j.get("archived_at"):
         return _date(j["archived_at"])
     if j.get("state") == "want_to_apply":
