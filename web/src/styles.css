@@ -149,6 +149,46 @@ tbody tr.sel { background: var(--sel); }
 .keys { display: flex; gap: 6px; align-items: center; padding: 6px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; background: var(--panel); }
 .keys .later { margin-left: auto; }
 
+/* ---- answers (W2) ---- */
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0 0; }
+.actions button, .vbtns button, .menu button, .toast button {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+}
+.actions button:hover:not(:disabled), .vbtns button:hover:not(:disabled), .menu button:hover:not(:disabled) { border-color: var(--accent); }
+.actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.actions button.primary kbd { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.link { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; text-transform: none; letter-spacing: 0; margin-left: 10px; }
+.verdict { cursor: pointer; }
+.verdict.picked { box-shadow: 0 0 0 2px var(--accent-soft); border-color: var(--accent); border-left-color: inherit; }
+.verdict.yes.picked { border-left-color: var(--yes); }
+.verdict.no.picked { border-left-color: var(--no); }
+.vbtns { display: flex; gap: 6px; margin-top: 8px; }
+.vbtns button { font-size: 12px; padding: 3px 8px; }
+.vbtns button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+tbody tr.answered td { opacity: 0.6; }
+tbody tr.answered.sel td { opacity: 1; }
+
+.overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.25); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.menu { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 280px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
+.menu h3 { margin: 0 0 6px; font-size: 15px; }
+.menu button { text-align: left; }
+.menu p { margin: 4px 0 0; font-size: 12px; }
+.reasonbox { width: min(520px, calc(100vw - 32px)); }
+.reasonbox input { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 8px 10px; }
+.reasonbox input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
+.toast {
+  position: fixed; right: 16px; bottom: 44px; z-index: 20; display: flex; gap: 10px; align-items: center;
+  background: var(--text); color: var(--bg); border-radius: 8px; padding: 9px 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  max-width: calc(100vw - 32px);
+}
+.toast.bad { background: var(--no); color: #fff; }
+.toast button { background: transparent; color: inherit; border-color: currentColor; padding: 2px 8px; font-size: 12px; }
+.toast kbd { background: transparent; color: inherit; border-color: currentColor; }
+.keys { flex-wrap: wrap; }
+.keys > span { white-space: nowrap; margin-right: 8px; }
+
 @media (max-width: 900px) {
   .top { gap: 12px; padding: 8px 12px; }
   .filters { padding: 8px 12px; }

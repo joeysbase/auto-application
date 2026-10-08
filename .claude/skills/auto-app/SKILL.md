@@ -61,9 +61,9 @@ collect (job sites + company career sites) → jobs (deduplicated) → filters j
 **The user's own screens** (they run them; you can't operate them):
 - `auto-app ui` (or `job browse`, `filter audit`, `apply inbox`): a full-screen terminal app (Jobs · Audit · Apply),
   fast for deciding and labelling many jobs with single keys, and for auditing a filter;
-- `auto-app web --open`: the same jobs in the browser at http://127.0.0.1:8765 (this Mac only). For now it's for
-  browsing and reading: tabs, search, a filter's verdict, every verdict's reason, the description. Deciding and
-  labelling there come later.
+- `auto-app web --open`: the same jobs in the browser at http://127.0.0.1:8765 (this Mac only): tabs, search, a
+  filter's verdict, every verdict's reason, the description, and the same answers as the TUI (want to apply / not
+  applying, should / shouldn't labels, reasons, undo). Apply, Status and Audit pages come later.
 
 Suggest one of them when the user wants to go through lots of jobs. To show the user a job in the web app, give the
 link `http://127.0.0.1:8765/?tab=all&job=<id>`; it works only while `auto-app web` runs.

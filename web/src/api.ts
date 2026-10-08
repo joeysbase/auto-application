@@ -1,7 +1,14 @@
 // The server's JSON API (src/auto_app/web/app.py)
 
 export interface Tab { id: string; title: string; count: number }
-export interface Meta { db: string; tabs: Tab[]; sources: string[]; filters: { name: string; version: string | null }[] }
+export interface Meta {
+  db: string;
+  tabs: Tab[];
+  sources: string[];
+  filters: { name: string; version: string | null }[];
+  states: { id: string; title: string }[];
+  can_undo: boolean;
+}
 
 export interface JobRow {
   job_id: number;
@@ -68,10 +75,19 @@ export interface JobQuery {
   filter?: string;
   verdict?: string;
   posted_within?: string;
+  keep?: string; // job ids answered in this tab during this visit: they stay listed
 }
 
-async function get<T>(path: string): Promise<T> {
-  const r = await fetch(path);
+/** What every answer returns: a line to show, the job as it is now, and whether undo has something. */
+export interface Answer {
+  message: string;
+  job: JobDetail | null;
+  can_undo: boolean;
+  job_id?: number; // undo: the job it changed
+}
+
+async function get<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(path, init);
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
     throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
@@ -86,4 +102,15 @@ export const api = {
     return get<JobRow[]>(`/api/jobs?${p}`);
   },
   job: (id: number) => get<JobDetail>(`/api/jobs/${id}`),
+  decide: (id: number, decision: "want_to_apply" | "not_applied", reason?: string) =>
+    post(`/api/jobs/${id}/decide`, { decision, reason }),
+  label: (id: number, should: boolean, filter?: string, reason?: string) =>
+    post(`/api/jobs/${id}/label`, { should, filter, reason }),
+  mark: (id: number, state: string) => post(`/api/jobs/${id}/mark`, { state }),
+  reason: (id: number, reason: string) => post(`/api/jobs/${id}/reason`, { reason }),
+  undo: () => post("/api/undo", {}),
 };
+
+function post(path: string, body: object): Promise<Answer> {
+  return get<Answer>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}

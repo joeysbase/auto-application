@@ -129,6 +129,17 @@ class JobBrowser(Review):
         self.undo_stack.append(Undo("feedback_many", job_id, {"prev": {v.filter: prev.get(v.filter) for v in d.verdicts}}))
         return [v.filter for v in d.verdicts]
 
+    def add_reason(self, job_id: int, reason: str) -> str | None:
+        """As Review's, and after `B` (every filter labelled at once) the reason goes on each of those labels."""
+        last = next((u for u in reversed(self.undo_stack) if u.job_id == job_id), None)
+        if last is None or last.kind != "feedback_many":
+            return super().add_reason(job_id, reason) if last is None or last.kind in ("decision", "feedback") else None
+        rows = self.store.feedback_of(job_id)
+        for name in last.data["prev"]:
+            if name in rows:
+                self.store.set_feedback({**rows[name], "reason": reason or None})
+        return f"labels ({', '.join(last.data['prev'])})"
+
     def mark(self, job_id: int, to: str) -> None:
         if to not in MARKABLE:
             raise ValueError(to)

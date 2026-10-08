@@ -61,7 +61,7 @@ web/   React + Vite + TS; `npm run dev` proxies /api to the server (`auto-app we
 | | What | Status |
 |---|---|---|
 | W1 | API (meta, jobs, job) + Jobs read-only (tabs, filters, table, detail) + `auto-app web` | ✅ 2026-10-07 |
-| W2 | Decisions, labels, reasons, set state, undo; the keys | |
+| W2 | Decisions, labels, reasons, set state, undo; the keys | ✅ 2026-10-07 |
 | W3 | Apply and Status (pause / resume) | |
 | W4 | Audit with the live evaluation | |
 
@@ -99,3 +99,32 @@ built `web/dist` (skipped when it isn't built).
   - serving the build (app routes, assets, no path escape);
   - a Playwright run of the built page: list, search, URL state, the `]` key; skipped without `web/dist`.
 - **Checked by hand on `data/try.db`:** all 130 jobs' detail panes render; light, dark and narrow layouts.
+
+## 7. As built: W2 (2026-10-07)
+
+- **API:**
+  - `POST /api/jobs/{id}/decide` `{decision, reason?}` → `Review.decide`;
+  - `POST /api/jobs/{id}/label` `{should, filter?, reason?}`: with a filter → `Review.label`; without →
+    `JobBrowser.label_all`, then the reason on each label;
+  - `POST /api/jobs/{id}/mark` `{state}`, `POST /api/jobs/{id}/reason` `{reason}` (`add_reason`: your last
+    answer on that job), `POST /api/undo`.
+  - Every answer returns `{message, job, can_undo}` (undo adds `job_id`). A refused answer is a 400 with the reason:
+    archived jobs can't be decided on or changed, an applied job can't be decided again.
+  - One lock serializes answers, keeping the undo stack and the database in step.
+  - `GET /api/jobs?keep=…` keeps the jobs answered in this tab listed (`JobBrowser.jobs(keep=)`); `meta` adds
+    `states` and `can_undo`.
+- **Fixed in `JobBrowser.add_reason`:** after `B` (every filter labelled at once) a reason crashed, because that undo
+  entry has no single filter. It now goes on each of those labels (the TUI's `r` too).
+- **The page:**
+  - **Buttons:** Want to apply / Not applying / Set state… / Reason… under the job's facts; 👍 should recommend /
+    👎 shouldn't on each verdict; "no filter should" by the Filters heading.
+  - **Keys** (the TUI's): `a`, `n`, `←` `→` or `1`–`9` to pick a filter (its card is outlined), `g`, `b`, `B`, `m`
+    (a menu, `1`–`6`), `r` (a reason box for your last answer), `u`.
+  - **After `a` / `n`:** the next job opens. The answered job stays in the tab, dimmed and showing its new state,
+    until you leave the tab.
+  - **Every answer shows a toast** with the message, "add a reason" and "undo"; errors show in red.
+- **Tests:**
+  - API: decide with a reason (implied labels; `keep`; undo; refusals), labels for one filter or all with reasons
+    (and `reason` after `B`), mark and undo;
+  - the browser test: `n`, then `r`, then `u` on the built page, checked against the database.
+- **Checked by hand on a copy of `try.db`:** `a` + next job, `r`, `u`, `g`, the state menu, leaving the tab.

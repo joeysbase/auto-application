@@ -6,13 +6,15 @@ decisions, labels and undo). The database is shared with `serve`, the TUI and Cl
 fresh. Only this Mac: the `Host` of every request, and the `Origin` of every write, must be this server.
 """
 
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
-from auto_app.process.job_browser import TAB_TITLES, TABS, JobBrowser
+from auto_app.process.job_browser import MARKABLE, TAB_TITLES, TABS, JobBrowser
 from auto_app.process.jobs_view import STATE_LABEL, expiry, place
 from auto_app.select import audit
 from auto_app.select.job_details import _salary
@@ -42,6 +44,25 @@ def row_json(j: dict, marks: dict | None = None) -> dict:
     return out
 
 
+class Decide(BaseModel):
+    decision: str  # want_to_apply | not_applied
+    reason: str | None = None
+
+
+class Label(BaseModel):
+    should: bool  # should recommend (True) / shouldn't (False)
+    filter: str | None = None  # None: every filter that judged the job ("no filter should" / "every filter should")
+    reason: str | None = None
+
+
+class Mark(BaseModel):
+    state: str
+
+
+class Reason(BaseModel):
+    reason: str
+
+
 def create_app(browser: JobBrowser, dist: Path | None = None, port: int = 8765, db_name: str = "",
                allowed_hosts: set[str] | None = None) -> FastAPI:
     """browser: the TUI's data side over the database; dist: the built React app (None: API only)."""
@@ -60,12 +81,26 @@ def create_app(browser: JobBrowser, dist: Path | None = None, port: int = 8765, 
 
     # ---- the API ----------------------------------------------------------------------------------
 
+    lock = threading.Lock()  # one answer at a time: the undo stack and the database stay in step
+
+    def answered(job_id: int, message: str) -> dict:
+        return {"message": message, "job": job(job_id) if store.job(job_id) else None, "can_undo": bool(browser.undo_stack)}
+
+    def act(fn):
+        with lock:
+            try:
+                return fn()
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+
     @app.get("/api/meta")
     def meta():
         counts = browser.counts()
         jobs = store.jobs(archived=None)
         return {
             "db": db_name,
+            "states": [{"id": s, "title": STATE_LABEL[s]} for s in MARKABLE],
+            "can_undo": bool(browser.undo_stack),
             "tabs": [{"id": t, "title": TAB_TITLES[t], "count": counts.get(t, 0)} for t in WEB_TABS],
             "sources": sorted({s for j in jobs for s in j.get("sources") or []}),
             "filters": [{"name": f.name, "version": f.version} for f in browser.filters.values()]
@@ -74,10 +109,11 @@ def create_app(browser: JobBrowser, dist: Path | None = None, port: int = 8765, 
 
     @app.get("/api/jobs")
     def jobs(tab: str = "recommended", q: str = "", source: str = "", company: str = "", filter: str = "",
-             verdict: str = "", posted_within: int | None = None):
+             verdict: str = "", posted_within: int | None = None, keep: str = ""):
+        """keep: job ids answered in this tab during this visit — they stay in it (as in the TUI) until you leave."""
         if tab not in WEB_TABS:
             raise HTTPException(400, f"unknown tab {tab!r}: one of {', '.join(WEB_TABS)}")
-        rows = browser.jobs(tab, q)
+        rows = browser.jobs(tab, q, keep={int(x) for x in keep.split(",") if x.strip().isdigit()})
         if source:
             rows = [j for j in rows if source in (j.get("sources") or [])]
         if company:
@@ -113,6 +149,60 @@ def create_app(browser: JobBrowser, dist: Path | None = None, port: int = 8765, 
                             "label": v.label, "label_origin": v.label_origin, "right": v.right} for v in d.verdicts]
         out["description"] = d.description
         return out
+
+    # ---- answers (W2): through Review / JobBrowser, as in the TUI --------------------------------------
+
+    @app.post("/api/jobs/{job_id}/decide")
+    def decide(job_id: int, body: Decide):
+        def go():
+            browser.decide(job_id, body.decision, body.reason or None)
+            what = "want to apply — queued" if body.decision == "want_to_apply" else "not applying"
+            return answered(job_id, f"#{job_id}: {what}" + (f" ({body.reason})" if body.reason else ""))
+        return act(go)
+
+    @app.post("/api/jobs/{job_id}/label")
+    def label(job_id: int, body: Label):
+        def go():
+            should = "should" if body.should else "shouldn't"
+            if body.filter:
+                browser.label(job_id, body.filter, body.should, body.reason or None)
+                return answered(job_id, f"#{job_id}: {body.filter} {should} recommend it")
+            names = browser.label_all(job_id, body.should)
+            if not names:
+                raise ValueError(f"no filter judged job #{job_id}")
+            if body.reason:
+                browser.add_reason(job_id, body.reason)
+            who = f"{', '.join(names)} should" if body.should else "no filter should"
+            return answered(job_id, f"#{job_id}: {who} recommend it")
+        return act(go)
+
+    @app.post("/api/jobs/{job_id}/mark")
+    def mark(job_id: int, body: Mark):
+        def go():
+            if body.state not in MARKABLE:
+                raise ValueError(f"unknown state {body.state!r}: one of {', '.join(MARKABLE)}")
+            browser.mark(job_id, body.state)
+            return answered(job_id, f"#{job_id}: now {STATE_LABEL.get(body.state, body.state)}")
+        return act(go)
+
+    @app.post("/api/jobs/{job_id}/reason")
+    def reason(job_id: int, body: Reason):
+        def go():
+            got = browser.add_reason(job_id, body.reason.strip())
+            if not got:
+                raise ValueError(f"nothing to attach a reason to: decide on or label #{job_id} first")
+            return answered(job_id, f"#{job_id}: reason added to your {got}")
+        return act(go)
+
+    @app.post("/api/undo")
+    def undo():
+        def go():
+            if not browser.undo_stack:
+                raise ValueError("nothing to undo")
+            job_id = browser.undo_stack[-1].job_id
+            what = browser.undo()
+            return {**answered(job_id, f"undone: {what}"), "job_id": job_id}
+        return act(go)
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE"])
     def unknown(rest: str):

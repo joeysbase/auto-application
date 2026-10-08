@@ -71,6 +71,48 @@ def test_serves_the_built_app(web):
     assert c.get("/api/nothing").status_code == 404
 
 
+def test_decide_with_a_reason_and_undo(web):
+    db, jobs, c = web
+    r = c.post(f"/api/jobs/{jobs['ml']}/decide", json={"decision": "want_to_apply", "reason": "great team"})
+    assert r.status_code == 200 and "queued" in r.json()["message"] and r.json()["job"]["state"] == "want_to_apply"
+    assert db.reviews(jobs["ml"])[-1]["reason"] == "great team"
+    assert db.feedback_of(jobs["ml"])["research"]["origin"] == "implied"  # research said no: you chose to apply
+    rows = c.get("/api/jobs", params={"tab": "recommended", "keep": str(jobs["ml"])}).json()
+    assert jobs["ml"] in {j["job_id"] for j in rows}  # stays in the tab you answered it in…
+    assert jobs["ml"] not in {j["job_id"] for j in c.get("/api/jobs", params={"tab": "recommended"}).json()}  # …until you leave
+    u = c.post("/api/undo").json()
+    assert u["job_id"] == jobs["ml"] and "undone" in u["message"] and db.job(jobs["ml"])["state"] == "recommended"
+    assert "research" not in db.feedback_of(jobs["ml"])  # the implied label went with it
+    assert c.post("/api/undo").status_code == 400  # nothing left
+    assert c.post(f"/api/jobs/{jobs['ml']}/decide", json={"decision": "applied"}).status_code == 400
+
+
+def test_labels_one_filter_or_all_with_reasons(web):
+    db, jobs, c = web
+    r = c.post(f"/api/jobs/{jobs['ml']}/label", json={"filter": "research", "should": True, "reason": "it is research"})
+    assert r.json()["message"].endswith("research should recommend it")
+    assert {v["filter"]: v["label"] for v in r.json()["job"]["verdicts"]}["research"] is True
+    assert db.feedback_of(jobs["ml"])["research"]["reason"] == "it is research"
+    r = c.post(f"/api/jobs/{jobs['sales']}/label", json={"should": False, "reason": "sales"})
+    assert "no filter should recommend it" in r.json()["message"]
+    fb = db.feedback_of(jobs["sales"])
+    assert {f: (v["label"], v["reason"]) for f, v in fb.items()} == {"ml": (False, "sales"), "research": (False, "sales")}
+    assert c.post(f"/api/jobs/{jobs['sales']}/reason", json={"reason": "it's sales"}).status_code == 200  # after B too
+    assert {v["reason"] for v in db.feedback_of(jobs["sales"]).values()} == {"it's sales"}
+    assert c.post(f"/api/jobs/{jobs['ml']}/label", json={"filter": "nope", "should": True}).status_code == 400
+
+
+def test_mark_any_state(web):
+    db, jobs, c = web
+    r = c.post(f"/api/jobs/{jobs['sales']}/mark", json={"state": "applied"})
+    assert r.json()["job"]["state"] == "applied" and "now applied" in r.json()["message"]
+    assert c.post("/api/undo").json()["job"]["state"] == "un_recommended"
+    assert c.post(f"/api/jobs/{jobs['sales']}/mark", json={"state": "archived"}).status_code == 400
+    assert c.post(f"/api/jobs/{jobs['ml']}/reason", json={"reason": "x"}).status_code == 400  # nothing answered yet
+    m = c.get("/api/meta").json()
+    assert {s["id"] for s in m["states"]} >= {"want_to_apply", "applied", "not_evaluated"}
+
+
 def test_the_page_in_a_browser(env):  # noqa: F811 — needs `auto-app web --build` (web/dist); skipped otherwise
     import socket
     import threading
@@ -108,6 +150,19 @@ def test_the_page_in_a_browser(env):  # noqa: F811 — needs `auto-app web --bui
             page.wait_for_function("document.querySelector('.detail h1').innerText === 'Data Analyst'")
             assert f"job={jobs['analyst']}" in page.url  # the view lives in the URL
             page.keyboard.press("Escape")
+            page.keyboard.press("n")  # not applying: saved, shown, and still listed here
+            page.wait_for_selector(".toast")
+            assert "not applying" in page.inner_text(".toast span")
+            assert db.job(jobs["analyst"])["decision"] == "not_applied"
+            assert page.locator("tbody tr.answered").count() == 1
+            page.keyboard.press("r")
+            page.fill(".reasonbox input", "it's reporting, not ML")
+            page.keyboard.press("Enter")
+            page.wait_for_function("document.querySelector('.toast span').innerText.includes('reason added')")
+            assert db.reviews(jobs["analyst"])[-1]["reason"] == "it's reporting, not ML"
+            page.keyboard.press("u")
+            page.wait_for_function("document.querySelector('.toast span').innerText.startsWith('undone')")
+            assert db.job(jobs["analyst"])["decision"] is None
             page.keyboard.press("]")  # the next tab: All recommended
             page.wait_for_function("document.querySelector('.tabs .on').innerText.startsWith('All recommended')")
             assert not errors

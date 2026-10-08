@@ -395,9 +395,15 @@ A web app next to the TUI ([docs/web-frontend.md](docs/web-frontend.md)), on **t
   - narrowing: search, source, company, one filter's verdict (recommended it / didn't / couldn't be read), date posted;
   - a table with the job's sources, state, expiry, ⚠ repost warnings and your 👍 / 👎 labels;
   - a detail pane: the job's facts and link, every filter's verdict with its reason and lookups and your label, the postings, the description.
-- **Keys:** `↑`/`↓` or `j`/`k` move · `[` / `]` previous / next tab · `/` search · `o` open the job's link · `esc` leaves the search box.
+- **Answers** (as in the TUI, through the same code; every one saves at once):
+  - **Buttons:** Want to apply / Not applying / Set state… / Reason… on the job; 👍 should recommend / 👎 shouldn't on each filter's verdict; "no filter should".
+  - **After each answer:** a toast with "add a reason" and "undo". After want to apply / not applying the next job opens. The answered job stays in the tab (dimmed) until you leave it.
+  - **Archived jobs:** labels only.
+- **Keys:**
+  - **moving:** `↑`/`↓` or `j`/`k` move · `[` / `]` previous / next tab · `/` search · `o` open the job's link · `esc` closes a box;
+  - **answers:** `a` want to apply · `n` not apply · `←`/`→` or `1`–`9` pick a filter · `g` / `b` it should / shouldn't recommend · `B` no filter should · `m` set state · `r` reason · `u` undo.
 - **The URL keeps the view** (tab, narrowing, the open job), so reloads and bookmarks come back to it.
-- **Coming next:** deciding and labelling (W2), Apply and Status (W3), Audit (W4). Until then use `auto-app ui` or Claude Code for those.
+- **Coming next:** Apply and Status (W3), Audit (W4). Until then use `auto-app ui` or Claude Code for those.
 
 | Option | |
 |---|---|
