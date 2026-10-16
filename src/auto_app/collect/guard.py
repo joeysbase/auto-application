@@ -11,6 +11,9 @@ HARD_STATUSES = {403, 429, 999}
 GONE_STATUSES = {404, 410}
 MAX_SOFT_STREAK = 3
 CHALLENGE_URL = re.compile(r"/(cdn-cgi/challenge|[^?]*security/challenge|[^?]*captcha)", re.IGNORECASE)
+# This machine has no network (Wi-Fi down, asleep, DNS gone): nothing the site did.
+OFFLINE_ERRORS = re.compile(r"net::ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NETWORK_CHANGED|ADDRESS_UNREACHABLE"
+                            r"|NETWORK_IO_SUSPENDED)\b")
 
 
 class HardBlock(Exception):
@@ -23,6 +26,10 @@ class NeedsLogin(HardBlock):
 
 class ChallengeDetected(HardBlock):
     """A security check (CAPTCHA / Cloudflare interstitial). A person may complete it by hand."""
+
+
+class NetworkDown(HardBlock):
+    """No network on this machine: stop the source for this run, but no cooldown; the next run tries again."""
 
 
 class SoftFailure(Exception):

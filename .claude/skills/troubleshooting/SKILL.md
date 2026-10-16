@@ -18,6 +18,9 @@ Check, in this order:
    - `needs_login`: the user must log in themselves with `uv run auto-app source login <source>` (opens Chrome). You
      can't log in for them.
    - `cooldown`: blocked by the site, so it waits until `cooldown_until`. `--reset` clears it, but suggest waiting.
+     If `last_block_reason` is a network error (`ERR_INTERNET_DISCONNECTED` …) from before 2026-10-16, it wasn't a
+     block: `--reset` is fine.
+   - a round's source status `offline`: the Mac had no network; no cooldown, the next round tries again.
 3. **The last collect:** `uv run auto-app collect stats --json` gives each search's stop reason:
    - `early_stop` / `done`: caught up, which is normal;
    - `time_limit` / `goal`: capped;

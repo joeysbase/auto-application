@@ -276,7 +276,7 @@ class Serve:
                                "caught_up": s.get("caught_up"), "goal_hit": s.get("goal_hit"), "status": s.get("status"),
                                "stopped_by": s.get("goal_hit") or stopped}  # e.g. a search's own max_pages
             rounds[name] = _iso(r.started)
-            if s.get("status") in ("needs_login", "blocked"):
+            if s.get("status") in ("needs_login", "blocked", "offline"):
                 r.problems.append(f"{name}: {s.get('status')} — {s.get('error') or ''}"[:300])
         r.next_round_at = r.collect_ended + timedelta(seconds=self.pause_length())  # the pause: from collecting's end
         self.state.update(status="filtering", source_rounds=rounds, next_round_at=_iso(r.next_round_at),

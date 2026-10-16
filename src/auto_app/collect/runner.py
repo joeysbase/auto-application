@@ -19,7 +19,8 @@ from auto_app.collect.browser import BrowserSession, ResponseCapture
 from auto_app.collect.collector_base import CollectorBase
 from auto_app.collect.filters import reject_reason
 from auto_app.collect.goal import RoundGoal
-from auto_app.collect.guard import ChallengeDetected, HardBlock, HealthGuard, NeedsLogin, SoftFailure
+from auto_app.collect.guard import (OFFLINE_ERRORS, ChallengeDetected, HardBlock, HealthGuard, NeedsLogin, NetworkDown,
+                                    SoftFailure)
 from auto_app.collect.pacer import Pacer
 from auto_app.collect.plan import Selection, build_tasks
 from auto_app.collect.store import FileStore
@@ -249,7 +250,8 @@ class SourceCollector(CollectorBase):
             log.info("%s: session ok", self.name)
 
     async def _on_block(self, e: HardBlock) -> None:
-        await self._artifacts("needs-login" if isinstance(e, NeedsLogin) else "blocked")
+        if not isinstance(e, NetworkDown):  # an offline page shows nothing of the site
+            await self._artifacts("needs-login" if isinstance(e, NeedsLogin) else "blocked")
         self.record_block(e)
 
     # ---- navigation -------------------------------------------------------------------
@@ -259,7 +261,10 @@ class SourceCollector(CollectorBase):
         try:
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         except PlaywrightError as e:
-            raise SoftFailure(f"navigation failed: {e.message.splitlines()[0]}") from e
+            first = e.message.splitlines()[0]
+            if OFFLINE_ERRORS.search(first):
+                raise NetworkDown(f"no network: {first}") from e
+            raise SoftFailure(f"navigation failed: {first}") from e
         self.pages_loaded += 1
         try:
             await self.guard.check(page, resp)
@@ -381,8 +386,8 @@ class SourceCollector(CollectorBase):
             log.warning("%s run %d stopped: %s", self.name, run_id, e)
             stop = StopReason.ERROR
             self.guard.record_soft_failure(e)
-        except HardBlock:
-            stop = StopReason.BLOCKED
+        except HardBlock as e:
+            stop = StopReason.ERROR if isinstance(e, NetworkDown) else StopReason.BLOCKED
             raise
         except asyncio.CancelledError:
             stop = StopReason.INTERRUPTED

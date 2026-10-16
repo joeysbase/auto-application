@@ -243,3 +243,12 @@ def test_retention_runs_once_a_day(make):
     off = make(cfg=ServeConfig(jitter=0, retention=None), retention=lambda: ran.append(1))
     off.step(["linkedin"])
     assert ran == [1, 1]  # retention: null = never
+
+
+def test_no_network_is_a_problem_but_no_stop(make):
+    offline = {"sources": {"linkedin": {"status": "offline", "error": "no network: net::ERR_INTERNET_DISCONNECTED",
+                                        "outcomes": {}, "pages_loaded": 0, "caught_up": False, "goal_hit": None}}}
+    s = make(collect=lambda src, g: (offline, 0))
+    r = s.step(["linkedin"])
+    assert r.problems == ["linkedin: offline — no network: net::ERR_INTERNET_DISCONNECTED"]
+    assert not s.state.read().get("stopped") and r.next_round_at == START + timedelta(minutes=40)

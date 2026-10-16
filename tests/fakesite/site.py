@@ -58,6 +58,7 @@ class FakeSite:
         self.challenge_once = False  # show it once, then "the user completes it" and it redirects back
         self.challenge_passed = False
         self.logged_in = True
+        self.offline_paths: tuple[str, ...] = ()  # these paths fail as if the internet were down
         self.requests: list[str] = []
 
     async def install(self, context: BrowserContext) -> None:
@@ -67,6 +68,8 @@ class FakeSite:
         url = urlparse(route.request.url)
         self.requests.append(url.path + ("?" + url.query if url.query else ""))
         html = lambda body, status=200: route.fulfill(status=status, content_type="text/html", body=body)  # noqa: E731
+        if url.path.startswith(self.offline_paths):
+            return await route.abort("internetdisconnected")
         if url.path == "/home":
             if not self.logged_in:
                 return await html("<nav><a href='/login'>Sign in</a></nav>")

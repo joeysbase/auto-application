@@ -350,6 +350,7 @@ Before searches, each source re-fetches cards whose latest outcome was `fetch_fa
 | Login redirect | stop source → `needs_login`, notify |
 | Security check (CAPTCHA, Cloudflare interstitial, `/challenge` URL) | stop source → cooldown (24–48 h), screenshots to `failures/`, notify — **unless** `manual_checks` is on: bring window forward, notify, wait (≤ 5 min, ≤ 5 per run) for the user to complete it, then continue |
 | HTTP 403 / 429 / 999 | stop source → cooldown |
+| No network on this machine (`net::ERR_INTERNET_DISCONNECTED`, `NAME_NOT_RESOLVED`, `NETWORK_CHANGED`, `ADDRESS_UNREACHABLE`, `NETWORK_IO_SUSPENDED`) | stop source for this run → status `offline`, **no cooldown**, no screenshots; the next run tries again |
 | 404 / 410 | `fetch_failed`, no retry |
 | Timeout / 5xx | retry ×2 with backoff; 3 consecutive failed cards → stop source |
 | No cards on page 1 | `stop_reason: empty`, screenshot saved (stale selectors or bad search URL) |

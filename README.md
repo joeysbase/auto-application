@@ -1021,6 +1021,7 @@ config/apply.yaml                     Step 3: the apply policy (template config/
 
 - Browsers run as **your own logged-in Chrome**, with human-like pacing and hard hourly / daily limits per source.
 - On a login wall, CAPTCHA / security check, or HTTP 403 / 429 / 999, that source **stops** (artifacts saved, notification sent) and goes into **cooldown**; other sources continue. Detection is never evaded — `--manual-checks` only hands a check to you.
+- If this machine has **no network** (Wi-Fi down, asleep, DNS gone), the source stops for that run with status `offline`, but there's **no cooldown**: the next run (or `serve` round) tries again.
 - Workday is collected through its career site's own (undocumented) JSON endpoint at about one request per second; Ashby, Greenhouse and Lever through their official public job-board APIs.
 
 ## Adding a source plugin

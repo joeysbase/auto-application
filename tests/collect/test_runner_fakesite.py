@@ -148,6 +148,29 @@ async def test_manual_check_not_completed_times_out_and_blocks(env, site):
     assert "not completed" in store.source_health("fake")["last_block_reason"]
 
 
+async def test_no_network_stops_this_run_without_a_cooldown(env, site):
+    store, make = env
+    site.offline_paths = ("/home",)  # the session check: the Mac lost Wi-Fi
+    batch = await make().run(["fake"])
+    src = batch["sources"]["fake"]
+    assert src["status"] == "offline" and "ERR_INTERNET_DISCONNECTED" in src["error"] and not src["caught_up"]
+    assert store.source_health("fake").get("status", "ok") == "ok"  # not a block: no cooldown
+    assert not list(store.failure_dir(batch["batch_id"], "fake").glob("*-blocked-*.png"))
+
+    site.offline_paths = ()
+    again = await make().run(["fake"])  # the next round collects
+    assert again["sources"]["fake"]["status"] == "ok" and again["sources"]["fake"]["outcomes"]["fetched"] == 4
+
+
+async def test_network_lost_mid_run_is_not_a_block(env, site):
+    store, make = env
+    site.offline_paths = ("/job/",)  # results load, then every job page fails: not "3 consecutive failures"
+    batch = await make().run(["fake"])
+    assert batch["sources"]["fake"]["status"] == "offline"
+    assert store.source_health("fake").get("status", "ok") == "ok"
+    assert store.get_search_runs(batch["batch_id"])[-1]["stop_reason"] == "error"
+
+
 async def test_logged_out_is_needs_login(env, site):
     store, make = env
     site.logged_in = False

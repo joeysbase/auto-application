@@ -9,6 +9,7 @@ One entry per feature or significant fix, newest first. Design lives in the step
 
 | Date | Feature | Step | Status | Entry |
 |---|---|---|---|---|
+| 2026-10-16 | Collect: **no network isn't a block** — `net::ERR_INTERNET_DISCONNECTED` and other offline errors stop the source for that run (status `offline`, a `serve` round problem) with no cooldown and no screenshots, instead of a 48 h cooldown | 1, 4 | ✅ done | [2026-10-16-offline-not-a-block](2026-10-16-offline-not-a-block.md) |
 | 2026-10-07 | Web frontend **W2**: decide and label in the browser — want to apply / not applying, should / shouldn't per filter or all, set state, reasons, undo; the TUI's keys; `JobBrowser.add_reason` after `B` fixed | web | ✅ W2 done | [2026-10-07-web-w2](2026-10-07-web-w2.md) |
 | 2026-10-07 | Web frontend designed (full app next to the TUI; FastAPI + React/Vite; localhost only) and **W1** built: `auto-app web`, the Jobs page (tabs, narrowing, table, detail with every verdict), keys, URL state | web | ✅ W1 done | [2026-10-07-web-w1](2026-10-07-web-w1.md) |
 | 2026-10-07 | Step 4 fixes: the launchd service's `PATH` includes where `uv` / `claude` are (and `~/.local/bin`), so filters run under `serve install`; `serve resume` after a stop now reaches a running loop (the backlog is judged at the next tick, not only at start-up) | 4 | ✅ done | [2026-10-07-serve-fixes](2026-10-07-serve-fixes.md) |

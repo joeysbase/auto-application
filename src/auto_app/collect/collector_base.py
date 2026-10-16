@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from auto_app.collect.goal import caught_up
-from auto_app.collect.guard import HardBlock, NeedsLogin
+from auto_app.collect.guard import HardBlock, NeedsLogin, NetworkDown
 from auto_app.collect.pacer import DAY, RateLimiter
 from auto_app.core.models import Card, Outcome, StopReason, utcnow
 from auto_app.core.notify import notify
@@ -54,6 +54,11 @@ class CollectorBase:
     def record_block(self, e: HardBlock) -> None:
         now = utcnow()
         self.error = str(e)
+        if isinstance(e, NetworkDown):  # not the site's doing: no cooldown, the next run tries again
+            self.status = "offline"
+            self.store.update_health(self.name, last_run_at=now)
+            log.warning("%s: no network, stopped for this run: %s", self.name, e)
+            return
         if isinstance(e, NeedsLogin):
             self.status = "needs_login"
             self.store.update_health(self.name, status="needs_login", last_block_at=now, last_block_reason=str(e))
